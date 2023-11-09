@@ -3,7 +3,7 @@ import pandas as pd
 from bs4  import BeautifulSoup
 import requests
 import time
-from datetime import datetime 
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings("ignore")
 import sys
@@ -22,6 +22,63 @@ from requests.exceptions import ChunkedEncodingError
 # ewc stands for "Events we care about."
 
 ewc = ['SHOT', 'HIT', 'BLOCK', 'MISS', 'GIVE', 'TAKE', 'GOAL']
+
+def scrape_schedule_one_week(start_date):
+    
+    url = f'https://api-web.nhle.com/v1/schedule/{start_date}'
+    page = requests.get(url, timeout = 500)
+    loaddict = json.loads(page.content)
+    
+    game_df = pd.DataFrame()
+
+    for i in range(0, (len(loaddict['gameWeek']))):
+        #print(i)
+        game_day = loaddict['gameWeek'][i]
+        game_df = game_df._append(pd.DataFrame(game_day['games']).assign(date = game_day['date']).rename(columns = {'id':'ID'}))
+
+    home_df = pd.DataFrame(game_df['homeTeam'].values.tolist())
+    away_df = pd.DataFrame(game_df['awayTeam'].values.tolist())
+
+    game_df = game_df.assign(
+        home_team = game_df.homeTeam.apply(lambda x: x['abbrev']),
+        away_team = game_df.awayTeam.apply(lambda x: x['abbrev'])
+    )
+
+    game_df = game_df.assign(state = np.where(game_df.gameState=='OFF', 'Final',
+                               np.where(game_df.gameState=='FUT', 'Scheduled',
+                                       np.where(game_df.gameState=='LIVE', 'In Progress',
+                                               'Error'))))
+
+    game_df = game_df.assign(type = np.where(game_df.gameType==2, 'R', 'Error'),
+                        venue = game_df['venue'].apply(lambda x: x['default']))
+
+    game_df = game_df.assign(ID = game_df.ID.astype(int), season = game_df.season.astype(int))
+
+    schedule = game_df.loc[:, ['ID', 'type', 'season', 'date', 'home_team', 'away_team', 'state']]
+
+    return schedule
+
+def scrape_full_schedule(
+        start_date = '2023-10-07',
+        end_date = '2024-04-18'):
+
+    full_schedule = pd.DataFrame()
+
+    scrape_day = start_date
+
+    while scrape_day <= end_date:
+
+        print(scrape_day)
+
+        week_scrape = scrape_schedule_one_week(scrape_day)
+
+        full_schedule = full_schedule._append(week_scrape)
+
+        last_day_scraped = max(full_schedule.date)
+
+        scrape_day = datetime.strftime((datetime.strptime(last_day_scraped, '%Y-%m-%d').date() + timedelta(days = 1)), '%Y-%m-%d')
+
+    return full_schedule[full_schedule.type=='R']
 
 def scrape_standings(season):
     """
@@ -48,20 +105,20 @@ def scrape_standings(season):
         div = (record_df['division'].iloc[i]['name'])
         conf = (record_df['conference'].iloc[i]['name'])
         for x in range(0, len((record_df['teamRecords'].iloc[i]))):
-            divisions.append(div)
-            conferences.append(conf)
-            team.append(record_df['teamRecords'].iloc[i][x]['team']['name'])
-            wins.append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['wins'])
-            losses.append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['losses'])
-            otl.append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['ot'])
-            gf.append(record_df['teamRecords'].iloc[i][x]['goalsScored'])
-            ga.append(record_df['teamRecords'].iloc[i][x]['goalsAgainst'])
+            divisions._append(div)
+            conferences._append(conf)
+            team._append(record_df['teamRecords'].iloc[i][x]['team']['name'])
+            wins._append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['wins'])
+            losses._append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['losses'])
+            otl._append(record_df['teamRecords'].iloc[i][x]['leagueRecord']['ot'])
+            gf._append(record_df['teamRecords'].iloc[i][x]['goalsScored'])
+            ga._append(record_df['teamRecords'].iloc[i][x]['goalsAgainst'])
             if season>20092010:
-                row.append(record_df['teamRecords'].iloc[i][x]['row'])
-            gp.append(record_df['teamRecords'].iloc[i][x]['gamesPlayed'])
-            pts.append(record_df['teamRecords'].iloc[i][x]['points'])
+                row._append(record_df['teamRecords'].iloc[i][x]['row'])
+            gp._append(record_df['teamRecords'].iloc[i][x]['gamesPlayed'])
+            pts._append(record_df['teamRecords'].iloc[i][x]['points'])
             if season>20192020:
-                rw.append(record_df['teamRecords'].iloc[i][x]['regulationWins'])
+                rw._append(record_df['teamRecords'].iloc[i][x]['regulationWins'])
                 
     if season < 20092010:
         stand = pd.DataFrame().assign(Team = team, Division = divisions, Conference = conferences,
@@ -97,7 +154,7 @@ def scrape_schedule(start_date, end_date):
 
     for i in range (0, len(date_df)):
         datedf = pd.DataFrame(date_df.games.iloc[i])
-        gamedf = gamedf.append(datedf)
+        gamedf = gamedf._append(datedf)
     global team_df
     team_df = pd.DataFrame(gamedf['teams'].values.tolist(), index = gamedf.index)
     away_df = pd.DataFrame(team_df['away'].values.tolist(), index = team_df.index)
@@ -160,7 +217,7 @@ def hs_strip_html(td):
                 elif i % 3 == 1:
                     if name != '':
                         position = bar[i].get_text()
-                        players.append([name, number, position])
+                        players._append([name, number, position])
 
             td[y] = players
         else:
@@ -412,11 +469,12 @@ def scrape_html_roster(season, game_id):
     (np.where(roster_df['Name']== "TIM STUTZLE" , "TIM STÜTZLE",
     (np.where(roster_df['Name']== "TIM ST?TZLE" , "TIM STÜTZLE",
     (np.where(roster_df['Name']== "TIM STÃTZLE" , "TIM STÜTZLE",
+    (np.where(roster_df['Name']== "JANI HAKANPÃ\x84Ã\x84" , "JANI HAKANPAA",
     (np.where(roster_df['Name']== "EGOR SHARANGOVICH" , "YEGOR SHARANGOVICH",
     (np.where(roster_df['Name']== "CALLAN FOOTE" , "CAL FOOTE",
     (np.where(roster_df['Name']== "MATTIAS JANMARK-NYLEN" , "MATTIAS JANMARK",
     (np.where(roster_df['Name']== "JOSH DUNNE" , "JOSHUA DUNNE",roster_df['Name'])))))))))))))))))))))))))))))))))))))))))))
-    )))))))))))))))))))))))))))))))))
+    )))))))))))))))))))))))))))))))))))
     
     roster_df['Name'] = np.where((roster_df['Name']=="SEBASTIAN AHO") & (roster_df['Pos']=='D'), 'SEBASTIAN AHO SWE', roster_df['Name'])
     roster_df['Name'] = np.where((roster_df['Name']=="COLIN WHITE") & (roster_df['Pos']=='D'), 'COLIN WHITE CAN', roster_df['Name'])
@@ -424,7 +482,16 @@ def scrape_html_roster(season, game_id):
     roster_df['Name'] = np.where((roster_df['Name']=="ALEX PICARD") & (roster_df['Pos']!='D'), 'ALEX PICARD F', roster_df['Name'])
     roster_df['Name'] = np.where((roster_df['Name']=="ERIK GUSTAFSSON") & (int(season)<20132014), 'ERIK GUSTAFSSON 88', roster_df['Name'])
     roster_df['Name'] = np.where((roster_df['Name']=="MIKKO LEHTONEN") & (int(season)<20202021), 'MIKKO LEHTONEN F', roster_df['Name'])
+    roster_df['Name'] = np.where(roster_df['Name']=='ALEX BARRÃ-BOULET', 'ALEX BARRE-BOULET', roster_df['Name'])
     roster_df['Name'] = np.where(roster_df['Name']=='COLIN', 'COLIN WHITE CAN', roster_df['Name'])
+
+    roster_df['Name'] = (np.where(roster_df['Name']== "JANIS MOSER" , "J.J. MOSER",
+        (np.where(roster_df['Name']== "NICHOLAS PAUL" , "NICK PAUL",
+        (np.where(roster_df['Name']== "JACOB MIDDLETON" , "JAKE MIDDLETON",
+        (np.where(roster_df['Name']== "TOMMY NOVAK" , "THOMAS NOVAK",
+        roster_df['Name']))))))))
+
+    roster_df['Name'] = roster_df['Name'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
 
     return roster_df 
 
@@ -439,393 +506,404 @@ def scrape_html_shifts(season, game_id):
     thisteam = soup.find('td', {'align':'center', 'class':'teamHeading + border'}).get_text()
     
     goalie_names = ['AARON DELL',
-     'AARON SOROCHAN',
-     'ADAM WERNER',
-     'ADAM WILCOX',
-     'ADIN HILL',
-     'AL MONTOYA',
-     'ALEX AULD',
-     "ALEX D'ORIO",
-     'ALEX LYON',
-     'ALEX NEDELJKOVIC',
-     'ALEX PECHURSKI',
-     'ALEX SALAK',
-     'ALEX STALOCK',
-     'ALEXANDAR GEORGIEV',
-     'ALEXEI MELNICHUK',
-     'ALLEN YORK',
-     'ANDERS LINDBACK',
-     'ANDERS NILSSON',
-     'ANDREI VASILEVSKIY',
-     'ANDREW HAMMOND',
-     'ANDREW RAYCROFT',
-     'ANDREY MAKAROV',
-     'ANGUS REDMOND',
-     'ANTERO NIITTYMAKI',
-     'ANTHONY STOLARZ',
-     'ANTOINE BIBEAU',
-     'ANTON FORSBERG',
-     'ANTON KHUDOBIN',
-     'ANTTI NIEMI',
-     'ANTTI RAANTA',
-     'ARTURS SILOVS',
-     'ARTYOM ZAGIDULIN',
-     'BEN BISHOP',
-     'BEN SCRIVENS',
-     'BEN WEXLER',
-     'BRAD THIESSEN',
-     'BRADEN HOLTBY',
-     'BRANDON HALVERSON',
-     'BRENT JOHNSON',
-     'BRENT KRAHN',
-     'BRETT LEONHARDT',
-     'BRIAN BOUCHER',
-     'BRIAN ELLIOTT',
-     'BRIAN FOSTER',
-     'BRYAN PITTON',
-     'CALVIN HEETER',
-     'CALVIN PETERSEN',
-     'CALVIN PICKARD',
-     'CAM TALBOT',
-     'CAM WARD',
-     'CAMERON JOHNSON',
-     'CAREY PRICE',
-     'CARTER HART',
-     'CARTER HUTTON',
-     'CASEY DESMITH',
-     'CAYDEN PRIMEAU',
-     'CEDRICK DESJARDINS',
-     'CHAD JOHNSON',
-     'CHARLIE LINDGREN',
-     'CHET PICKARD',
-     'CHRIS BECKFORD-TSEU',
-     'CHRIS DRIEDGER',
-     'CHRIS GIBSON',
-     'CHRIS HOLT',
-     'CHRIS MASON',
-     'CHRIS OSGOOD',
-     'COLE KEHLER',
-     'COLLIN DELIA',
-     'CONNOR HELLEBUYCK',
-     'CONNOR INGRAM',
-     'CONNOR KNAPP',
-     'COREY CRAWFORD',
-     'CORY SCHNEIDER',
-     'CRAIG ANDERSON',
-     'CRISTOBAL HUET',
-     'CRISTOPHER NILSTORP',
-     'CURTIS JOSEPH',
-     'CURTIS MCELHINNEY',
-     'CURTIS SANFORD',
-     'DAN CLOUTIER',
-     'DAN ELLIS',
-     'DAN TURPLE',
-     'DAN VLADAR',
-     'DANIEL ALTSHULLER',
-     'DANIEL LACOSTA',
-     'DANIEL LARSSON',
-     'DANIEL MANZATO',
-     'DANIEL TAYLOR',
-     'DANY SABOURIN',
-     'DARCY KUEMPER',
-     'DAREN MACHESNEY',
-     'DAVID AEBISCHER',
-     'DAVID AYRES',
-     'DAVID LENEVEU',
-     'DAVID RITTICH',
-     'DAVID SHANTZ',
-     'DENNIS ENDRAS',
-     'DERECK BARIBEAU',
-     'DEVAN DUBNYK',
-     'DIMITRI PATZOLD',
-     'DOMINIK HASEK',
-     'DREW MACINTYRE',
-     'DUSTIN BUTLER',
-     'DUSTIN TOKARSKI',
-     'DUSTYN ZENNER',
-     'DWAYNE ROLOSON',
-     'DYLAN FERGUSON',
-     'DYLAN WELLS',
-     'EAMON MCADAM',
-     'EDDIE LACK',
-     'EDWARD PASQUALE',
-     'ELVIS MERZLIKINS',
-     'EMIL LARMI',
-     'ERIC COMRIE',
-     'ERIC HARTZELL',
-     'ERIC SEMBORSKI',
-     'ERIK ERSBERG',
-     'EVAN CORMIER',
-     'EVAN FITZPATRICK',
-     'EVGENI NABOKOV',
-     'FELIX SANDSTROM',
-     'FILIP GUSTAVSSON',
-     'FRED BRATHWAITE',
-     'FREDERIC CASSIVI',
-     'FREDERIK ANDERSEN',
-     'FREDRIK NORRENA',
-     'GARRET SPARKS',
-     'GAVIN MCHALE',
-     'GERALD COLEMAN',
-     'GILLES SENN',
-     'HANNU TOIVONEN',
-     'HARRI SATERI',
-     'HENRIK KARLSSON',
-     'HENRIK LUNDQVIST',
-     'HUNTER MISKA',
-     'IGOR BOBKOV',
-     'IGOR SHESTERKIN',
-     'IIRO TARKKI',
-     'ILYA BRYZGALOV',
-     'ILYA SAMSONOV',
-     'ILYA SOROKIN',
-     'IVAN PROSVETOV',
-     'J-F BERUBE',
-     'J.F. BERUBE',
-     'JACK CAMPBELL',
-     'JACOB MARKSTROM',
-     'JAKE ALLEN',
-     'JAKE OETTINGER',
-     'JAMES REIMER',
-     'JARED COREAU',
-     'JAROSLAV HALAK',
-     'JASON BACASHIHUA',
-     'JASON KASDORF',
-     'JASON LABARBERA',
-     'JASON MISSIAEN',
-     'JEAN-PHILIPPE LEVASSEUR',
-     'JEAN-SEBASTIEN AUBIN',
-     'JEAN-SEBASTIEN GIGUERE',
-     'JEFF DESLAURIERS',
-     'JEFF FRAZEE',
-     'JEFF GLASS',
-     'JEFF TYNI',
-     'JEFF ZATKOFF',
-     'JEREMY DUCHESNE',
-     'JEREMY SMITH',
-     'JEREMY SWAYMAN',
-     'JHONAS ENROTH',
-     'JIMMY HOWARD',
-     'JOACIM ERIKSSON',
-     'JOCELYN THIBAULT',
-     'JOE CANNATA',
-     'JOE FALLON',
-     'JOEL MARTIN',
-     'JOEY DACCORD',
-     'JOEY MACDONALD',
-     'JOHAN BACKLUND',
-     'JOHAN GUSTAFSSON',
-     'JOHAN HEDBERG',
-     'JOHAN HOLMQVIST',
-     'JOHN CURRY',
-     'JOHN GIBSON',
-     'JOHN GRAHAME',
-     'JOHN MUSE',
-     'JON GILLIES',
-     'JON-PAUL ANDERSON',
-     'JONAS GUSTAVSSON',
-     'JONAS HILLER',
-     'JONAS JOHANSSON',
-     'JONATHAN BERNIER',
-     'JONATHAN BOUTIN',
-     'JONATHAN QUICK',
-     'JONI ORTIO',
-     'JOONAS KORPISALO',
-     'JORDAN BINNINGTON',
-     'JORDAN PEARCE',
-     'JORDAN SIGALET',
-     'JORDAN WHITE',
-     'JORGE ALVES',
-     'JOSE THEODORE',
-     'JOSEF KORENAR',
-     'JOSEPH WOLL',
-     'JOSH HARDING',
-     'JOSH TORDJMAN',
-     'JUSSI RYNNAS',
-     'JUSTIN KOWALKOSKI',
-     'JUSTIN PETERS',
-     'JUSTIN POGGE',
-     'JUUSE SAROS',
-     'JUUSO RIKSMAN',
-     'KAAPO KAHKONEN',
-     'KADEN FULCHER',
-     'KARI LEHTONEN',
-     'KARRI RAMO',
-     'KASIMIR KASKISUO',
-     'KEITH KINKAID',
-     'KEN APPLEBY',
-     'KENNETH APPLEBY',
-     'KENT SIMPSON',
-     'KEVIN BOYLE',
-     'KEVIN LANKINEN',
-     'KEVIN MANDOLESE',
-     'KEVIN NASTIUK',
-     'KEVIN POULIN',
-     'KEVIN WEEKES',
-     'KRISTERS GUDLEVSKIS',
-     'KURTIS MUCHA',
-     'LANDON BOW',
-     'LARS JOHANSSON',
-     'LAURENT BROSSOIT',
-     'LELAND IRVING',
-     'LINUS ULLMARK',
-     'LOGAN THOMPSON',
-     'LOUIS DOMINGUE',
-     'LUKAS DOSTAL',
-     'MACKENZIE BLACKWOOD',
-     'MACKENZIE SKAPSKI',
-     'MAGNUS HELLBERG',
-     'MALCOLM SUBBAN',
-     'MANNY FERNANDEZ',
-     'MANNY LEGACE',
-     'MARC CHEVERIE',
-     'MARC DENIS',
-     'MARC-ANDRE FLEURY',
-     'MARCUS HOGBERG',
-     'MAREK LANGHAMER',
-     'MAREK MAZANEC',
-     'MAREK SCHWARZ',
-     'MARK DEKANICH',
-     'MARK VISENTIN',
-     'MARTIN BIRON',
-     'MARTIN BRODEUR',
-     'MARTIN GERBER',
-     'MARTIN JONES',
-     'MARTY TURCO',
-     'MAT ROBSON',
-     'MATHIEU CORBEIL',
-     'MATHIEU GARON',
-     'MATISS KIVLENIEKS',
-     'MATT CLIMIE',
-     'MATT DALTON',
-     'MATT HACKETT',
-     'MATT KEETLEY',
-     'MATT MURRAY',
-     'MATT VILLALTA',
-     'MATT ZABA',
-     'MATTHEW HEWITT',
-     "MATTHEW O'CONNOR",
-     'MAXIME LAGACE',
-     'MICHAEL DIPIETRO',
-     'MICHAEL GARTEIG',
-     'MICHAEL HOUSER',
-     'MICHAEL HUTCHINSON',
-     'MICHAEL LEE',
-     'MICHAEL LEIGHTON',
-     'MICHAEL MCNIVEN',
-     'MICHAEL MOLE',
-     'MICHAEL MORRISON',
-     'MICHAEL WALL',
-     'MICHAL NEUVIRTH',
-     'MIIKA WIIKMAN',
-     'MIIKKA KIPRUSOFF',
-     'MIKAEL TELLQVIST',
-     'MIKE BRODEUR',
-     'MIKE CONDON',
-     'MIKE MCKENNA',
-     'MIKE MURPHY',
-     'MIKE SMITH',
-     'MIKKO KOSKINEN',
-     'MIROSLAV SVOBODA',
-     'NATHAN DEOBALD',
-     'NATHAN LAWSON',
-     'NATHAN LIEUWEN',
-     'NATHAN SCHOENFELD',
-     'NICK ELLIS',
-     'NIKLAS BACKSTROM',
-     'NIKLAS LUNDSTROM',
-     'NIKLAS SVEDBERG',
-     'NIKLAS TREUTLE',
-     'NIKOLAI KHABIBULIN',
-     'NOLAN SCHAEFER',
-     'OLIE KOLZIG',
-     'ONDREJ PAVELEC',
-     'OSCAR DANSK',
-     'PASCAL LECLAIRE',
-     'PAT CONACHER',
-     'PATRICK KILLEEN',
-     'PATRICK LALIME',
-     'PAUL DEUTSCH',
-     'PAVEL FRANCOUZ',
-     'PEKKA RINNE',
-     'PETER BUDAJ',
-     'PETER MANNINO',
-     'PETR MRAZEK',
-     'PHEONIX COPLEY',
-     'PHILIPP GRUBAUER',
-     'PHILIPPE DESROSIERS',
-     'RAY EMERY',
-     'RETO BERRA',
-     'RICHARD BACHMAN',
-     'RICK DIPIETRO',
-     'RIKU HELENIUS',
-     'ROB LAURIE',
-     'ROB ZEPP',
-     'ROBB  TALLAS',
-     'ROBBIE TALLAS',
-     'ROBERT MAYER',
-     'ROBERTO LUONGO',
-     'ROBIN LEHNER',
-     'ROMAN WILL',
-     'RYAN LOWE',
-     'RYAN MILLER',
-     'RYAN MUNCE',
-     'RYAN VINZ',
-     'SAM BRITTAIN',
-     'SAM MONTEMBEAULT',
-     'SAMI AITTOKALLIO',
-     'SAMUEL MONTEMBEAULT',
-     'SCOTT CLEMMENSEN',
-     'SCOTT DARLING',
-     'SCOTT FOSTER',
-     'SCOTT MUNROE',
-     'SCOTT STAJCER',
-     'SCOTT WEDGEWOOD',
-     'SEBASTIEN CARON',
-     'SEMYON VARLAMOV',
-     'SERGEI BOBROVSKY',
-     'SHAWN HUNWICK',
-     'SPENCER KNIGHT',
-     'SPENCER MARTIN',
-     'STEFANOS LEKKAS',
-     'STEVE MASON',
-     'STEVE MICHALEK',
-     'STEVE VALIQUETTE',
-     'STUART SKINNER',
-     'THATCHER DEMKO',
-     'THOMAS FENTON',
-     'THOMAS GREISS',
-     'TIM THOMAS',
-     'TIMO PIELMEIER',
-     'TIMOTHY JR. THOMAS',
-     'TOBIAS STEPHAN',
-     'TODD FORD',
-     'TOM MCCOLLUM',
-     'TOMAS POPPERLE',
-     'TOMAS VOKOUN',
-     'TORRIE JUNG',
-     'TRISTAN JARRY',
-     'TROY GROSENICK',
-     'TUUKKA RASK',
-     'TY CONKLIN',
-     'TYLER BUNZ',
-     'TYLER PLANTE',
-     'TYLER STEWART',
-     'TYLER WEIMAN',
-     'TYSON SEXSMITH',
-     'UKKO-PEKKA LUUKKONEN',
-     'VEINI VEHVILAINEN',
-     'VESA TOSKALA',
-     'VIKTOR FASTH',
-     'VILLE HUSSO',
-     'VITEK VANECEK',
-     'WADE DUBIELEWICZ',
-     'YANN DANIS',
-     'ZACH FUCALE',
-     'ZACH SIKICH',
-     'ZACHARY FUCALE',
-     'ZANE KALEMBA',
-     'ZANE MCINTYRE']
+ 'AARON SOROCHAN',
+ 'ADAM HUSKA',
+ 'ADAM WERNER',
+ 'ADAM WILCOX',
+ 'ADIN HILL',
+ 'AKIRA SCHMID',
+ 'AL MONTOYA',
+ 'ALEX AULD',
+ "ALEX D'ORIO",
+ 'ALEX LYON',
+ 'ALEX NEDELJKOVIC',
+ 'ALEX PECHURSKI',
+ 'ALEX SALAK',
+ 'ALEX STALOCK',
+ 'ALEXANDAR GEORGIEV',
+ 'ALEXEI MELNICHUK',
+ 'ALLEN YORK',
+ 'ANDERS LINDBACK',
+ 'ANDERS NILSSON',
+ 'ANDREI VASILEVSKIY',
+ 'ANDREW HAMMOND',
+ 'ANDREW RAYCROFT',
+ 'ANDREY MAKAROV',
+ 'ANGUS REDMOND',
+ 'ANTERO NIITTYMAKI',
+ 'ANTHONY STOLARZ',
+ 'ANTOINE BIBEAU',
+ 'ANTON FORSBERG',
+ 'ANTON KHUDOBIN',
+ 'ANTTI NIEMI',
+ 'ANTTI RAANTA',
+ 'ARTURS SILOVS',
+ 'ARTYOM ZAGIDULIN',
+ 'ARVID SODERBLOM',
+ 'BEN BISHOP',
+ 'BEN SCRIVENS',
+ 'BEN WEXLER',
+ 'BRAD THIESSEN',
+ 'BRADEN HOLTBY',
+ 'BRANDON HALVERSON',
+ 'BRENT JOHNSON',
+ 'BRENT KRAHN',
+ 'BRETT LEONHARDT',
+ 'BRIAN BOUCHER',
+ 'BRIAN ELLIOTT',
+ 'BRIAN FOSTER',
+ 'BRYAN PITTON',
+ 'CAL PETERSEN',
+ 'CALVIN HEETER',
+ 'CALVIN PETERSEN',
+ 'CALVIN PICKARD',
+ 'CAM TALBOT',
+ 'CAM WARD',
+ 'CAMERON JOHNSON',
+ 'CAREY PRICE',
+ 'CARTER HART',
+ 'CARTER HUTTON',
+ 'CASEY DESMITH',
+ 'CAYDEN PRIMEAU',
+ 'CEDRICK DESJARDINS',
+ 'CHAD JOHNSON',
+ 'CHARLIE LINDGREN',
+ 'CHET PICKARD',
+ 'CHRIS BECKFORD-TSEU',
+ 'CHRIS DRIEDGER',
+ 'CHRIS GIBSON',
+ 'CHRIS HOLT',
+ 'CHRIS MASON',
+ 'CHRIS OSGOOD',
+ 'COLE KEHLER',
+ 'COLLIN DELIA',
+ 'CONNOR HELLEBUYCK',
+ 'CONNOR INGRAM',
+ 'CONNOR KNAPP',
+ 'COREY CRAWFORD',
+ 'CORY SCHNEIDER',
+ 'CRAIG ANDERSON',
+ 'CRISTOBAL HUET',
+ 'CRISTOPHER NILSTORP',
+ 'CURTIS JOSEPH',
+ 'CURTIS MCELHINNEY',
+ 'CURTIS SANFORD',
+ 'DAN CLOUTIER',
+ 'DAN ELLIS',
+ 'DAN TURPLE',
+ 'DAN VLADAR',
+ 'DANIEL ALTSHULLER',
+ 'DANIEL LACOSTA',
+ 'DANIEL LARSSON',
+ 'DANIEL MANZATO',
+ 'DANIEL TAYLOR',
+ 'DANIIL TARASOV',
+ 'DANY SABOURIN',
+ 'DARCY KUEMPER',
+ 'DAREN MACHESNEY',
+ 'DAVID AEBISCHER',
+ 'DAVID AYRES',
+ 'DAVID LENEVEU',
+ 'DAVID RITTICH',
+ 'DAVID SHANTZ',
+ 'DENNIS ENDRAS',
+ 'DERECK BARIBEAU',
+ 'DEVAN DUBNYK',
+ 'DIMITRI PATZOLD',
+ 'DOMINIK HASEK',
+ 'DREW MACINTYRE',
+ 'DUSTIN BUTLER',
+ 'DUSTIN TOKARSKI',
+ 'DUSTYN ZENNER',
+ 'DWAYNE ROLOSON',
+ 'DYLAN FERGUSON',
+ 'DYLAN WELLS',
+ 'EAMON MCADAM',
+ 'EDDIE LACK',
+ 'EDWARD PASQUALE',
+ 'ELVIS MERZLIKINS',
+ 'EMIL LARMI',
+ 'ERIC COMRIE',
+ 'ERIC HARTZELL',
+ 'ERIC SEMBORSKI',
+ 'ERIK ERSBERG',
+ 'EVAN CORMIER',
+ 'EVAN FITZPATRICK',
+ 'EVGENI NABOKOV',
+ 'FELIX SANDSTROM',
+ 'FILIP GUSTAVSSON',
+ 'FRED BRATHWAITE',
+ 'FREDERIC CASSIVI',
+ 'FREDERIK ANDERSEN',
+ 'FREDRIK NORRENA',
+ 'GARRET SPARKS',
+ 'GAVIN MCHALE',
+ 'GERALD COLEMAN',
+ 'GILLES SENN',
+ 'HANNU TOIVONEN',
+ 'HARRI SATERI',
+ 'HENRIK KARLSSON',
+ 'HENRIK LUNDQVIST',
+ 'HUGO ALNEFELT',
+ 'HUNTER MISKA',
+ 'IGOR BOBKOV',
+ 'IGOR SHESTERKIN',
+ 'IIRO TARKKI',
+ 'ILYA BRYZGALOV',
+ 'ILYA SAMSONOV',
+ 'ILYA SOROKIN',
+ 'IVAN PROSVETOV',
+ 'J-F BERUBE',
+ 'J.F. BERUBE',
+ 'JACK CAMPBELL',
+ 'JACOB MARKSTROM',
+ 'JAKE ALLEN',
+ 'JAKE OETTINGER',
+ 'JAMES REIMER',
+ 'JARED COREAU',
+ 'JAROSLAV HALAK',
+ 'JASON BACASHIHUA',
+ 'JASON KASDORF',
+ 'JASON LABARBERA',
+ 'JASON MISSIAEN',
+ 'JEAN-PHILIPPE LEVASSEUR',
+ 'JEAN-SEBASTIEN AUBIN',
+ 'JEAN-SEBASTIEN GIGUERE',
+ 'JEFF DESLAURIERS',
+ 'JEFF FRAZEE',
+ 'JEFF GLASS',
+ 'JEFF TYNI',
+ 'JEFF ZATKOFF',
+ 'JEREMY DUCHESNE',
+ 'JEREMY SMITH',
+ 'JEREMY SWAYMAN',
+ 'JHONAS ENROTH',
+ 'JIMMY HOWARD',
+ 'JOACIM ERIKSSON',
+ 'JOCELYN THIBAULT',
+ 'JOE CANNATA',
+ 'JOE FALLON',
+ 'JOEL HOFER',
+ 'JOEL MARTIN',
+ 'JOEY DACCORD',
+ 'JOEY MACDONALD',
+ 'JOHAN BACKLUND',
+ 'JOHAN GUSTAFSSON',
+ 'JOHAN HEDBERG',
+ 'JOHAN HOLMQVIST',
+ 'JOHN CURRY',
+ 'JOHN GIBSON',
+ 'JOHN GRAHAME',
+ 'JOHN MUSE',
+ 'JON GILLIES',
+ 'JON-PAUL ANDERSON',
+ 'JONAS GUSTAVSSON',
+ 'JONAS HILLER',
+ 'JONAS JOHANSSON',
+ 'JONATHAN BERNIER',
+ 'JONATHAN BOUTIN',
+ 'JONATHAN QUICK',
+ 'JONI ORTIO',
+ 'JOONAS KORPISALO',
+ 'JORDAN BINNINGTON',
+ 'JORDAN PEARCE',
+ 'JORDAN SIGALET',
+ 'JORDAN WHITE',
+ 'JORGE ALVES',
+ 'JOSE THEODORE',
+ 'JOSEF KORENAR',
+ 'JOSEPH WOLL',
+ 'JOSH HARDING',
+ 'JOSH TORDJMAN',
+ 'JUSSI RYNNAS',
+ 'JUSTIN KOWALKOSKI',
+ 'JUSTIN PETERS',
+ 'JUSTIN POGGE',
+ 'JUSTUS ANNUNEN',
+ 'JUUSE SAROS',
+ 'JUUSO RIKSMAN',
+ 'KAAPO KAHKONEN',
+ 'KADEN FULCHER',
+ 'KAREL VEJMELKA',
+ 'KARI LEHTONEN',
+ 'KARRI RAMO',
+ 'KASIMIR KASKISUO',
+ 'KEITH KINKAID',
+ 'KEN APPLEBY',
+ 'KENNETH APPLEBY',
+ 'KENT SIMPSON',
+ 'KEVIN BOYLE',
+ 'KEVIN LANKINEN',
+ 'KEVIN MANDOLESE',
+ 'KEVIN NASTIUK',
+ 'KEVIN POULIN',
+ 'KEVIN WEEKES',
+ 'KRISTERS GUDLEVSKIS',
+ 'KURTIS MUCHA',
+ 'LANDON BOW',
+ 'LARS JOHANSSON',
+ 'LAURENT BROSSOIT',
+ 'LELAND IRVING',
+ 'LINUS ULLMARK',
+ 'LOGAN THOMPSON',
+ 'LOUIS DOMINGUE',
+ 'LUKAS DOSTAL',
+ 'MACKENZIE BLACKWOOD',
+ 'MACKENZIE SKAPSKI',
+ 'MAGNUS HELLBERG',
+ 'MALCOLM SUBBAN',
+ 'MANNY FERNANDEZ',
+ 'MANNY LEGACE',
+ 'MARC CHEVERIE',
+ 'MARC DENIS',
+ 'MARC-ANDRE FLEURY',
+ 'MARCUS HOGBERG',
+ 'MAREK LANGHAMER',
+ 'MAREK MAZANEC',
+ 'MAREK SCHWARZ',
+ 'MARK DEKANICH',
+ 'MARK VISENTIN',
+ 'MARTIN BIRON',
+ 'MARTIN BRODEUR',
+ 'MARTIN GERBER',
+ 'MARTIN JONES',
+ 'MARTY TURCO',
+ 'MAT ROBSON',
+ 'MATHIEU CORBEIL',
+ 'MATHIEU GARON',
+ 'MATISS KIVLENIEKS',
+ 'MATT CLIMIE',
+ 'MATT DALTON',
+ 'MATT HACKETT',
+ 'MATT KEETLEY',
+ 'MATT MURRAY',
+ 'MATT VILLALTA',
+ 'MATT ZABA',
+ 'MATTHEW HEWITT',
+ "MATTHEW O'CONNOR",
+ 'MAXIME LAGACE',
+ 'MICHAEL DIPIETRO',
+ 'MICHAEL GARTEIG',
+ 'MICHAEL HOUSER',
+ 'MICHAEL HUTCHINSON',
+ 'MICHAEL LEE',
+ 'MICHAEL LEIGHTON',
+ 'MICHAEL MCNIVEN',
+ 'MICHAEL MOLE',
+ 'MICHAEL MORRISON',
+ 'MICHAEL WALL',
+ 'MICHAL NEUVIRTH',
+ 'MIIKA WIIKMAN',
+ 'MIIKKA KIPRUSOFF',
+ 'MIKAEL TELLQVIST',
+ 'MIKE BRODEUR',
+ 'MIKE CONDON',
+ 'MIKE MCKENNA',
+ 'MIKE MURPHY',
+ 'MIKE SMITH',
+ 'MIKKO KOSKINEN',
+ 'MIROSLAV SVOBODA',
+ 'NATHAN DEOBALD',
+ 'NATHAN LAWSON',
+ 'NATHAN LIEUWEN',
+ 'NATHAN SCHOENFELD',
+ 'NICK ELLIS',
+ 'NICO DAWS',
+ 'NIKLAS BACKSTROM',
+ 'NIKLAS LUNDSTROM',
+ 'NIKLAS SVEDBERG',
+ 'NIKLAS TREUTLE',
+ 'NIKOLAI KHABIBULIN',
+ 'NOLAN SCHAEFER',
+ 'OLIE KOLZIG',
+ 'ONDREJ PAVELEC',
+ 'OSCAR DANSK',
+ 'PASCAL LECLAIRE',
+ 'PAT CONACHER',
+ 'PATRICK KILLEEN',
+ 'PATRICK LALIME',
+ 'PAUL DEUTSCH',
+ 'PAVEL FRANCOUZ',
+ 'PEKKA RINNE',
+ 'PETER BUDAJ',
+ 'PETER MANNINO',
+ 'PETR MRAZEK',
+ 'PHEONIX COPLEY',
+ 'PHILIPP GRUBAUER',
+ 'PHILIPPE DESROSIERS',
+ 'RAY EMERY',
+ 'RETO BERRA',
+ 'RICHARD BACHMAN',
+ 'RICK DIPIETRO',
+ 'RIKU HELENIUS',
+ 'ROB LAURIE',
+ 'ROB ZEPP',
+ 'ROBB  TALLAS',
+ 'ROBBIE TALLAS',
+ 'ROBERT MAYER',
+ 'ROBERTO LUONGO',
+ 'ROBIN LEHNER',
+ 'ROMAN WILL',
+ 'RYAN LOWE',
+ 'RYAN MILLER',
+ 'RYAN MUNCE',
+ 'RYAN VINZ',
+ 'SAM BRITTAIN',
+ 'SAM MONTEMBEAULT',
+ 'SAMI AITTOKALLIO',
+ 'SAMUEL MONTEMBEAULT',
+ 'SCOTT CLEMMENSEN',
+ 'SCOTT DARLING',
+ 'SCOTT FOSTER',
+ 'SCOTT MUNROE',
+ 'SCOTT STAJCER',
+ 'SCOTT WEDGEWOOD',
+ 'SEBASTIEN CARON',
+ 'SEMYON VARLAMOV',
+ 'SERGEI BOBROVSKY',
+ 'SHAWN HUNWICK',
+ 'SPENCER KNIGHT',
+ 'SPENCER MARTIN',
+ 'STEFANOS LEKKAS',
+ 'STEVE MASON',
+ 'STEVE MICHALEK',
+ 'STEVE VALIQUETTE',
+ 'STUART SKINNER',
+ 'THATCHER DEMKO',
+ 'THOMAS FENTON',
+ 'THOMAS GREISS',
+ 'TIM THOMAS',
+ 'TIMO PIELMEIER',
+ 'TIMOTHY JR. THOMAS',
+ 'TOBIAS STEPHAN',
+ 'TODD FORD',
+ 'TOM MCCOLLUM',
+ 'TOMAS POPPERLE',
+ 'TOMAS VOKOUN',
+ 'TORRIE JUNG',
+ 'TRISTAN JARRY',
+ 'TROY GROSENICK',
+ 'TUUKKA RASK',
+ 'TY CONKLIN',
+ 'TYLER BUNZ',
+ 'TYLER PLANTE',
+ 'TYLER STEWART',
+ 'TYLER WEIMAN',
+ 'TYSON SEXSMITH',
+ 'UKKO-PEKKA LUUKKONEN',
+ 'VEINI VEHVILAINEN',
+ 'VESA TOSKALA',
+ 'VIKTOR FASTH',
+ 'VILLE HUSSO',
+ 'VITEK VANECEK',
+ 'WADE DUBIELEWICZ',
+ 'YANN DANIS',
+ 'ZACH FUCALE',
+ 'ZACH SAWCHENKO',
+ 'ZACH SIKICH',
+ 'ZACHARY FUCALE',
+ 'ZANE KALEMBA',
+ 'ZANE MCINTYRE']
 
     players = dict()
 
@@ -854,7 +932,7 @@ def scrape_html_shifts(season, game_id):
                       number = players[key]['number'],
                       team = thisteam,
                       venue = "home")
-        alldf = alldf.append(df)
+        alldf = alldf._append(df)
         
     home_shifts = alldf
     
@@ -891,7 +969,7 @@ def scrape_html_shifts(season, game_id):
                       number = players[key]['number'],
                       team = thisteam,
                       venue = "away")
-        alldf = alldf.append(df)
+        alldf = alldf._append(df)
 
     away_shifts = alldf
     
@@ -1069,14 +1147,18 @@ def scrape_html_shifts(season, game_id):
     (np.where(all_shifts['name']== "ALEXIS LAFRENI?RE" , "ALEXIS LAFRENIÈRE",
     (np.where(all_shifts['name']== "ALEXIS LAFRENIERE" , "ALEXIS LAFRENIÈRE", 
     (np.where(all_shifts['name']== "ALEXIS LAFRENIÃRE" , "ALEXIS LAFRENIÈRE",
+    (np.where(all_shifts['name']== "JANI HAKANPÃ\x84Ã\x84" , "JANI HAKANPAA",
     (np.where(all_shifts['name']== "TIM STUTZLE" , "TIM STÜTZLE",
     (np.where(all_shifts['name']== "TIM ST?TZLE" , "TIM STÜTZLE",
     (np.where(all_shifts['name']== "TIM STÃTZLE" , "TIM STÜTZLE",
     (np.where(all_shifts['name']== "EGOR SHARANGOVICH" , "YEGOR SHARANGOVICH",
     (np.where(all_shifts['name']== "CALLAN FOOTE" , "CAL FOOTE",
     (np.where(all_shifts['name']== "MATTIAS JANMARK-NYLEN" , "MATTIAS JANMARK",
+    (np.where(all_shifts['name']== 'ALEX BARRÃ-BOULET', 'ALEX BARRE-BOULET',
     (np.where(all_shifts['name']== "JOSH DUNNE" , "JOSHUA DUNNE",all_shifts['name'])))))))))))))))))))))))))))))))))))))))))))
-    )))))))))))))))))))))))))))))))))
+    )))))))))))))))))))))))))))))))))))))
+
+    all_shifts['name'] = all_shifts['name'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
     
     
     all_shifts = all_shifts.assign(end_time = np.where(pd.to_datetime(all_shifts.start_time).dt.time > pd.to_datetime(all_shifts.end_time).dt.time, '20:00', all_shifts.end_time),
@@ -1090,7 +1172,9 @@ def scrape_html_shifts(season, game_id):
     
     all_shifts = all_shifts.assign(end_time = np.where(
     (pd.to_datetime(all_shifts.start_time).dt.time < datetime(2021, 6, 10, 18, 0, 0).time()) & 
-    (all_shifts.period!=3) & (all_shifts.period!=4) & 
+    (all_shifts.period!=3) & 
+    (all_shifts.period!=4) &
+    (all_shifts.period!=5) &
     (all_shifts.goalie==1) &
     (all_shifts.period_gs==1),
     '20:00', all_shifts.end_time))
@@ -1098,6 +1182,7 @@ def scrape_html_shifts(season, game_id):
     all_shifts = all_shifts.assign(end_time = np.where(
     (pd.to_datetime(all_shifts.start_time).dt.time < datetime(2021, 6, 10, 13, 0, 0).time()) & 
     (all_shifts.period!=4) &
+    (all_shifts.period!=5) &
     (all_shifts.goalie==1) &
     (all_shifts.period_gs==1),
     '20:00', all_shifts.end_time))
@@ -1129,7 +1214,7 @@ def scrape_html_shifts(season, game_id):
     
     full_changes['period_seconds'] = full_changes.time.str.split(':').str[0].astype(int) * 60 + full_changes.time.str.split(':').str[1].astype(int)
 
-    full_changes['game_seconds'] = (np.where(full_changes.period<5, 
+    full_changes['game_seconds'] = (np.where((full_changes.period<5) & int(game_id[0])!=3, 
                                    (((full_changes.period - 1) * 1200) + full_changes.period_seconds),
                           3900))
     
@@ -1142,7 +1227,7 @@ def scrape_api_events(game_id, drop_description = True, shift_to_espn = False):
     if shift_to_espn == True:
         raise KeyError
     
-    page = requests.get(str('https://statsapi.web.nhl.com/api/v1/game/' + str(game_id) + '/feed/live'))
+    page = requests.get(str('https://api-web.nhle.com/v1/gamecenter/' + str(game_id) + '/play-by-play'))
     
     if str(page) == '<Response [404]>':
         raise KeyError('You got the 404 error; game data could not be found.')
@@ -1368,11 +1453,18 @@ def scrape_api_events(game_id, drop_description = True, shift_to_espn = False):
         (np.where(api_events['ep1_name']=="ALEXIS LAFRENIERE", "ALEXIS LAFRENIÈRE",
         (np.where(api_events['ep1_name']=="TIM STUTZLE", "TIM STÜTZLE",
         (np.where(api_events['ep1_name']=="TIM ST?TZLE", "TIM STÜTZLE",
+        (np.where(api_events['ep1_name']== "JANI HAKANPÃ\x84Ã\x84" , "JANI HAKANPAA",
         (np.where(api_events['ep1_name']=="EGOR SHARANGOVICH", "YEGOR SHARANGOVICH",
         (np.where(api_events['ep1_name']=="CALLAN FOOTE", "CAL FOOTE",
         (np.where(api_events['ep1_name']=="JOSH DUNNE", "JOSHUA DUNNE", api_events['ep1_name']
         ))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
-        )))))))))))))))))))))))))))))))))))))))))))))
+        )))))))))))))))))))))))))))))))))))))))))))))))
+
+        # 21-22 CHANGES
+
+        api_events['ep1_name'] = api_events['ep1_name'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
+
+        api_events = api_events.assign(ep1_name = np.where(api_events.ep1_name=='ALEX BARRÃ-BOULET', 'ALEX BARRE_BOULET', api_events.ep1_name))
 
         if drop_description == True:
         
@@ -1509,7 +1601,7 @@ def scrape_html_events(season, game_id):
 
     game['period_seconds'] = game.time.str.split(':').str[0].str.replace('-', '').astype(int) * 60 + game.time.str.split(':').str[1].str.replace('-', '').astype(int)
 
-    game['game_seconds'] = (np.where(game.period<5, 
+    game['game_seconds'] = (np.where((game.period<5) & int(game_id[0])!=3, 
                                        (((game.period - 1) * 1200) + game.period_seconds),
                               3900))
     
@@ -1555,7 +1647,8 @@ def scrape_html_events(season, game_id):
     game = game.assign(home_team = np.where(game.home_team=='CANADIENS MONTREAL', 'MONTREAL CANADIENS', game.home_team),
                       away_team = np.where(game.away_team=='CANADIENS MONTREAL', 'MONTREAL CANADIENS', game.away_team))
     
-    game = game[game.game_seconds<4000]
+    if int(game_id[0])!=3:
+        game = game[game.game_seconds<4000]
     
     game['game_date'] = np.where((season=='20072008') & (game_id == '20003'), game.game_date + pd.Timedelta(days=1), game.game_date)
     
@@ -1576,306 +1669,199 @@ def scrape_html_events(season, game_id):
     return game.drop(columns = ['period_seconds', 'time', 'priority', 'home_skater_count_temp', 'away_skater_count_temp'])
 
 def scrape_espn_events(espn_game_id, drop_description = True):
+
+    # This URL has event coordinates
     
-    ### NEED TO FIX PENALTY SHOTS ##
-    global playdict
-    # Hawks ID: 270114004
-    # Sharks ID: 401272106
-    # Habs game: 401044320
-    # Flames game (first goal unasssisted): 401320053
-
-    url = 'https://www.espn.com/nhl/gamecast/data/masterFeed?lang=en&isAll=true&rand=0&gameId=' + str(espn_game_id)
-    page = requests.get(url, timeout = 500)
-    try:
-        dictionary = xmltodict.parse(page.content.decode('ISO-8859-1'))
-    except ExpatError as e:
-        problem = int(str(e).split('column')[1].strip())
-        problem_value = page.content.decode('ISO-8859-1')[problem]
-        dictionary = xmltodict.parse(page.content.decode('ISO-8859-1').replace(problem_value, ''))
-    if (dictionary['NHLGamecast']['Plays']) is None:
-        raise IndexError('This game has no events.')
-    playdict = (dictionary['NHLGamecast']['Plays']['Play'])
+    url = f'https://www.espn.com/nhl/playbyplay/_/gameId/{espn_game_id}'
     
-    if len(playdict)>2:
+    page = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout = 500)
     
-        global play_list
-        play_list = []
-        play_id_list = []
+    soup = BeautifulSoup(page.content.decode('ISO-8859-1'), 'lxml', multi_valued_attributes = None)
+    
+    period_jsons = json.loads(str(soup).split('"playGrps":')[1].split(',"tms"')[0])
+    
+    clock_df = pd.DataFrame()
 
-        for i in range(0, len(playdict)):
-            play_list.append(playdict[i]['#text'])
-            play_id_list.append(playdict[i]['@id'])
+    for period in range(0, len(period_jsons)):
+        clock_df = clock_df._append(pd.DataFrame(period_jsons[period]))
 
-        x_coordinates = []
-        y_coordinates = []
-        game_mins = []
-        game_secs = []
-        game_pd = []
-        event_desc = []
+    clock_df = clock_df[~pd.isna(clock_df.clock)]
 
-        for i in range (0, len(play_list)):
-            split = play_list[i].split('~')
-            x_coordinates.append(split[0])
-            y_coordinates.append(split[1])
-            game_mins.append(play_list[i].split(':')[0].split('~')[-1])
-            game_secs.append(play_list[i].split(':')[1].split('~')[0].split('-')[0])
-            event_desc.append(" ".join(re.findall("[a-z-'.A-Z]+|\dst|\drd|\d2nd|\d  minutes|\d minutes", play_list[i])))
-            if (len(re.split(r'(:\d+)~', play_list[i])))>1:
-                game_pd.append((re.split(r'(:\d+)~', play_list[i])[2][0]))
-            else:
-                game_pd.append(re.split('-\d~|-\d:\d-\d~', play_list[i])[1][0])
+    coords_df = pd.DataFrame(json.loads(str(soup).split('plays":')[1].split(',"st":1')[0].split(',"st":2')[0]))
 
+    clock_df = clock_df.assign(
+        clock = clock_df.clock.apply(lambda x: x['displayValue'])
+    )
+    
+    coords_df = coords_df.assign(
+        coords_x = coords_df[~pd.isna(coords_df.coordinate)].coordinate.apply(lambda x: x['x']).astype(int),
+        coords_y = coords_df[~pd.isna(coords_df.coordinate)].coordinate.apply(lambda y: y['y']).astype(int),
+        event_player_1 = coords_df[~pd.isna(coords_df.athlete)]['athlete'].apply(lambda x: x['name'])
+    )
 
-        #event_desc.append(" ".join(re.findall("[a-zA-Z]+", play_list[i])))
-        # Below is the code to get information that includes period number and penalty minutes. It is timely and unncessary.
+    espn_events = coords_df.merge(clock_df.loc[:, ['id', 'clock']])
 
+    espn_events = espn_events.assign(
+        period = espn_events['period'].apply(lambda x: x['number']),
+        minutes = espn_events['clock'].str.split(':').apply(lambda x: x[0]).astype(int),
+        seconds = espn_events['clock'].str.split(':').apply(lambda x: x[1]).astype(int),
+        event_type = espn_events['type'].apply(lambda x: x['txt'])
+    )
 
-        espn_events = pd.DataFrame()
+    espn_events = espn_events.assign(coords_x = np.where((pd.isna(espn_events.coords_x)) & (pd.isna(espn_events.coords_y)) &
+                (espn_events.event_type=='Face Off'), 0, espn_events.coords_x
+    ),
+                      coords_y = np.where((pd.isna(espn_events.coords_x)) & (pd.isna(espn_events.coords_y)) &
+                (espn_events.event_type=='Face Off'), 0, espn_events.coords_y))
 
-        #for i in range(0, len(game_secs)):
-         #   print((int(game_secs[i])))
+    espn_events = espn_events[(~pd.isna(espn_events.coords_x)) & (~pd.isna(espn_events.coords_y)) & (~pd.isna(espn_events.event_player_1))]
 
-        espn_events = espn_events.assign(
-        coords_x = x_coordinates,
-        coords_y = y_coordinates,
-        period = game_pd,
-        minutes = game_mins,
-        seconds = game_secs,
-        description = event_desc)
-
-        espn_events = espn_events.assign(
+    espn_events = espn_events.assign(
+        # Do this later
         coords_x = espn_events.coords_x.astype(int),
-        coords_y = espn_events.coords_y.astype(int),
-        period = espn_events.period.astype(int),
-        minutes = espn_events.minutes.astype(int),
-        seconds = espn_events.seconds.astype(int),
-        description = espn_events.description.str.strip('-|- -').str.strip()).sort_values(by = ['period', 'minutes', 'seconds'])
-        espn_events['minutes'] = np.where(espn_events.minutes<0, 0, espn_events.minutes)
+        coords_y = espn_events.coords_y.astype(int)
+    )
+    
+    espn_events = espn_events.rename(columns = {'text':'description'})
+    
+    espn_events = espn_events.assign(
+        event_type = np.where(espn_events.event_type=='Face Off', 'FAC',
+                             np.where(espn_events.event_type=='Goal', 'GOAL',
+                                 np.where(espn_events.event_type=='Giveaway', 'GIVE',
+                                     np.where(espn_events.event_type=='Penalty', 'PENL',
+                                         np.where(espn_events.event_type=='Missed', 'MISS',
+                                             np.where(espn_events.event_type=='Shot', 'SHOT',
+                                                 np.where(espn_events.event_type=='Takeaway', 'TAKE',
+                                                     np.where(espn_events.event_type=='Blocked', 'BLOCK',
+                                                         np.where(espn_events.event_type=='Hit', 'HIT',
+                                                              espn_events.event_type))))))))))
+    
+    espn_events = espn_events.assign(priority = np.where(espn_events.event_type.isin(['TAKE', 'GIVE', 'MISS', 'HIT', 'SHOT', 'BLOCK']), 1, 
+                                            np.where(espn_events.event_type=="GOAL", 2,
+                                                np.where(espn_events.event_type=="STOP", 3,
+                                                    np.where(espn_events.event_type=="DELPEN", 4,
+                                                        np.where(espn_events.event_type=="PENL", 5,
+                                                            np.where(espn_events.event_type=="CHANGE", 6,
+                                                                np.where(espn_events.event_type=="PEND", 7,
+                                                                    np.where(espn_events.event_type=="GEND", 8,
+                                                                        np.where(espn_events.event_type=="FAC", 9, 0))))))))),
+                                    event_player_1 = espn_events.event_player_1.str.upper(),
+                                    game_seconds = np.where(espn_events.period<5, 
+                                    ((espn_events.period - 1) * 1200) + (espn_events.minutes * 60) + espn_events.seconds, 3900))
+    
+    espn_events = espn_events.sort_values(by = ['period', 'game_seconds', 'event_player_1', 'priority']).rename(
+    columns = {'event_type':'event'}).loc[:, ['coords_x', 'coords_y', 'event_player_1', 'event', 'game_seconds', 'description', 'period']]
+    
+    espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('ALEXANDRE '), 
+                                espn_events['event_player_1'].str.replace('ALEXANDRE ', 'ALEX '),
+                                espn_events['event_player_1'])
+    
+    espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('ALEXANDER '), 
+                                espn_events['event_player_1'].str.replace('ALEXANDER ', 'ALEX '),
+                                espn_events['event_player_1'])
+    
+    espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('CHRISTOPHER '), 
+                                espn_events['event_player_1'].str.replace('CHRISTOPHER ', 'CHRIS '),
+                                espn_events['event_player_1'])
+    
+    espn_events = espn_events.assign(event_player_1 = 
+    np.where(espn_events.event_player_1=='PATRICK MAROON', 'PAT MAROON',
+    (np.where(espn_events.event_player_1=='J T COMPHER', 'J.T. COMPHER', 
+    (np.where(espn_events.event_player_1=='J T MILLER', 'J.T. MILLER', 
+    (np.where(espn_events.event_player_1=='T J OSHIE', 'T.J. OSHIE', 
+    (np.where((espn_events.event_player_1=='ALEXIS LAFRENIERE') | (espn_events.event_player_1=='ALEXIS LAFRENI RE'), 'ALEXIS LAFRENIÈRE', 
+    (np.where((espn_events.event_player_1=='TIM STUTZLE') | (espn_events.event_player_1=='TIM ST TZLE'), 'TIM STÜTZLE',
+    (np.where(espn_events.event_player_1=='T.J. BRODIE', 'TJ BRODIE',
+    (np.where(espn_events.event_player_1=='MATTHEW IRWIN', 'MATT IRWIN',
+    (np.where(espn_events.event_player_1=='STEVE KAMPFER', 'STEVEN KAMPFER',
+    (np.where(espn_events.event_player_1=='STEVE KAMPFER', 'STEVEN KAMPFER',
+    (np.where(espn_events.event_player_1=='JEFFREY TRUCHON-VIEL', 'JEFFREY VIEL',
+    (np.where(espn_events.event_player_1=='ZACHARY JONES', 'ZAC JONES',
+    (np.where(espn_events.event_player_1=='MITCH MARNER', 'MITCHELL MARNER',
+    (np.where(espn_events.event_player_1=='MATHEW DUMBA', 'MATT DUMBA',
+    (np.where(espn_events.event_player_1=='JOSHUA MORRISSEY', 'JOSH MORRISSEY',
+    (np.where(espn_events.event_player_1=='P K SUBBAN', 'P.K. SUBBAN',
+    (np.where(espn_events.event_player_1=='EGOR SHARANGOVICH', 'YEGOR SHARANGOVICH',
+    (np.where(espn_events.event_player_1=='MAXIME COMTOIS', 'MAX COMTOIS',
+    (np.where(espn_events.event_player_1=='NICHOLAS CAAMANO', 'NICK CAAMANO',
+    (np.where(espn_events.event_player_1=='DANIEL CARCILLO', 'DAN CARCILLO',
+    (np.where(espn_events.event_player_1=='ALEXANDER OVECHKIN', 'ALEX OVECHKIN',
+    (np.where(espn_events.event_player_1=='MICHAEL CAMMALLERI', 'MIKE CAMMALLERI',
+    (np.where(espn_events.event_player_1=='DAVE STECKEL', 'DAVID STECKEL',
+    (np.where(espn_events.event_player_1=='JIM DOWD', 'JAMES DOWD', 
+    (np.where(espn_events.event_player_1=='MAXIME TALBOT', 'MAX TALBOT',
+    (np.where(espn_events.event_player_1=='MIKE ZIGOMANIS', 'MICHAEL ZIGOMANIS',
+    (np.where(espn_events.event_player_1=='VINNY PROSPAL', 'VACLAV PROSPAL',
+    (np.where(espn_events.event_player_1=='MIKE YORK', 'MICHAEL YORK',
+    (np.where(espn_events.event_player_1=='JACOB DOWELL', 'JAKE DOWELL',
+    (np.where(espn_events.event_player_1=='MICHAEL RUPP', 'MIKE RUPP',
+    (np.where(espn_events.event_player_1=='ALEXEI KOVALEV', 'ALEX KOVALEV',
+    (np.where(espn_events.event_player_1=='SLAVA KOZLOV', 'VYACHESLAV KOZLOV',
+    (np.where(espn_events.event_player_1=='JEFF HAMILTON', 'JEFFREY HAMILTON',
+    (np.where(espn_events.event_player_1=='JOHNNY POHL', 'JOHN POHL',
+    (np.where(espn_events.event_player_1=='DANIEL GIRARDI', 'DAN GIRARDI',
+    (np.where(espn_events.event_player_1=='NIKOLAI ZHERDEV', 'NIKOLAY ZHERDEV',
+    (np.where(espn_events.event_player_1=='J.P. DUMONT', 'J-P DUMONT',
+    (np.where(espn_events.event_player_1=='DWAYNE KING', 'DJ KING',
+    (np.where(espn_events.event_player_1=='JOHN ODUYA', 'JOHNNY ODUYA',
+    (np.where(espn_events.event_player_1=='ROBERT SCUDERI', 'ROB SCUDERI',
+    (np.where(espn_events.event_player_1=='DOUG MURRAY', 'DOUGLAS MURRAY',
+    (np.where(espn_events.event_player_1=='VACLAV PROSPAL', 'VINNY PROSPAL',
+    (np.where(espn_events.event_player_1=='RICH PEVERLY', 'RICH PEVERLEY',
+    espn_events.event_player_1.str.strip()
+             ))))))))))))))))))))))))))))))))))))))))))))
+             ))))))))))))))))))))))))))))))))))))))))))
 
-        espn_events['duplicated_description'] = espn_events['description']
-
-        espn_events['duplicated_description'] = espn_events['description']
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split('Giveaway by')[1].split(' in')[0].strip() if 'Giveaway by' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split('Takeaway by')[1].split(' in')[0].strip() if 'Takeaway by' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split('credited with hit')[0].split('credited')[0].strip() if 'credited with hit' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split('won faceoff')[0].strip() if 'faceoff' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('Wristshot|Tip-In|Snapshot|Backhand|Slapshot|Deflection|Wraparound',
-                               re.split('scored by|Scored by', x)[1].split('assisted by')[0].split('unassisted')[0].split('Power')[0].split('Empty')[0].split('Shorthanded')[0])[0].strip() if (
-                'Goal Scored' in x or 'Goal scored' in x or 'Shootout GOAL' in x) and x!='Goal scored' else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('Shot blocked by', x)[1].strip() if 'Shot blocked by' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('shot blocked', x)[0].strip() if 'blocked' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('Shot blocked', x)[1].strip() if 'block' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('missed by', x)[1].split('Wide')[0].split('Over')[0].split('Goalpost')[0].split('Hit')[0].strip() if 'missed by' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('Wristshot|Tip-In|Snapshot|Backhand|Slapshot|Deflection|Saved|Wraparound', re.split('Shot on goal by', x)[1].split('saved')[0].split('ft')[0].split('shootout')[0] if 'Shot on goal' in x and x!='Shot on goal' else x)[0].strip())
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('0|2|4|5|10', re.split('Penalty to', x)[1].split('minutes')[0])[0].strip() if 'Penalty to' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: re.split('saved|MISSES|SAVED', x.split('Shootout attempt by')[1])[0].split('saved')[0].strip() if 'Shootout attempt by' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split(' on ')[0].strip() if ' on ' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: 'BENCH' if 'Bench' in x and 'Penalty' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events['event_player_1'] = espn_events['duplicated_description'].apply(
-            lambda x: x.split('shootout')[0].strip() if 'shootout attempt against' in x else x)
-        espn_events['duplicated_description'] = np.where(espn_events['event_player_1']!=espn_events['duplicated_description'], espn_events['event_player_1'], espn_events['duplicated_description'])
-
-        espn_events = espn_events.assign(event_type = np.where((espn_events.description.str.contains("Penalty")) | ((espn_events.description.str.contains("Bench penalty"))),
-        "PENL",
-        (np.where(((espn_events.description.str.contains("Shot on goal")) | 
-        (espn_events.description.str.contains('Shootout attempt by *.* saved')) |
-        (espn_events.description.str.contains('Shootout attempt by *.* SAVED')) |
-        (espn_events.description.str.contains("shootout attempt *.* results in a SAVE"))),
-        "SHOT",
-        (np.where(((espn_events.description.str.contains("Shot missed")) |
-        (espn_events.description.str.contains('Shootout attempt by *.* MISSES')) |
-        (espn_events.description.str.contains("shootout attempt *.* results in a MISS"))),
-        "MISS",
-        (np.where(espn_events.description.str.contains("faceoff"),
-        "FAC",
-        (np.where(espn_events.description.str.contains("blocked"),
-        "BLOCK",
-        (np.where(espn_events.description.str.contains("credited with hit"),
-        "HIT",
-        (np.where((espn_events.description.str.contains("Giveaway by")) | (espn_events.description.str.contains("Giveaway in")),
-        "GIVE",
-        (np.where((espn_events.description.str.contains("Takeaway by")) | (espn_events.description.str.contains("Takeaway in")),
-        "TAKE",
-        (np.where(espn_events.description.str.contains("Goal Scored|Goal scored|GOAL scored|shootout attempt *.* results in a GOAL"),
-        "GOAL",
-        (np.where(espn_events.description.str.contains("Start of"),
-        "PSTR",
-        (np.where((espn_events.description.str.contains("End of")) & 
-              (espn_events.description.str!="End of Game"),
-        "PEND",
-        (np.where(espn_events.description.str.contains("Stoppage"),
-         "STOP",  
-            (np.where(espn_events.description=='End of Game',
-             "GEND",  
-        ''))))))))))))))))))))))))))#.loc[:, ['game_seconds', 'description','event_type',  'coords_x', 'coords_y', 'event_player_1']]
-        espn_events = espn_events.assign(
-            event_player_1 = np.where(espn_events.event_player_1==espn_events.description, '\xa0', espn_events.event_player_1))
-
-        espn_events = espn_events.assign(priority = np.where(espn_events.event_type.isin(['TAKE', 'GIVE', 'MISS', 'HIT', 'SHOT', 'BLOCK']), 1, 
-                                                np.where(espn_events.event_type=="GOAL", 2,
-                                                    np.where(espn_events.event_type=="STOP", 3,
-                                                        np.where(espn_events.event_type=="DELPEN", 4,
-                                                            np.where(espn_events.event_type=="PENL", 5,
-                                                                np.where(espn_events.event_type=="CHANGE", 6,
-                                                                    np.where(espn_events.event_type=="PEND", 7,
-                                                                        np.where(espn_events.event_type=="GEND", 8,
-                                                                            np.where(espn_events.event_type=="FAC", 9, 0))))))))),
-                                        event_player_1 = espn_events.event_player_1.str.upper(),
-                                        game_seconds = np.where(espn_events.period<5, 
-                                        ((espn_events.period - 1) * 1200) + (espn_events.minutes * 60) + espn_events.seconds, 3900))
-        espn_events['game_seconds'] = espn_events.game_seconds.astype(int)
-        espn_events = espn_events.sort_values(by = ['period', 'game_seconds', 'event_player_1', 'priority']).rename(
-        columns = {'event_type':'event'}).loc[:, ['coords_x', 'coords_y', 'event_player_1', 'event', 'game_seconds', 'description', 'period']]
-
-        espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('ALEXANDRE '), 
-                                    espn_events['event_player_1'].str.replace('ALEXANDRE ', 'ALEX '),
-                                    espn_events['event_player_1'])
-
-        espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('ALEXANDER '), 
-                                    espn_events['event_player_1'].str.replace('ALEXANDER ', 'ALEX '),
-                                    espn_events['event_player_1'])
-
-        espn_events['event_player_1'] = np.where(espn_events['event_player_1'].str.contains('CHRISTOPHER '), 
-                                    espn_events['event_player_1'].str.replace('CHRISTOPHER ', 'CHRIS '),
-                                    espn_events['event_player_1'])
-
-        espn_events = espn_events.assign(event_player_1 = 
-        np.where(espn_events.event_player_1=='PATRICK MAROON', 'PAT MAROON',
-        (np.where(espn_events.event_player_1=='J T COMPHER', 'J.T. COMPHER', 
-        (np.where(espn_events.event_player_1=='J T MILLER', 'J.T. MILLER', 
-        (np.where(espn_events.event_player_1=='T J OSHIE', 'T.J. OSHIE', 
-        (np.where((espn_events.event_player_1=='ALEXIS LAFRENIERE') | (espn_events.event_player_1=='ALEXIS LAFRENI RE'), 'ALEXIS LAFRENIÈRE', 
-        (np.where((espn_events.event_player_1=='TIM STUTZLE') | (espn_events.event_player_1=='TIM ST TZLE'), 'TIM STÜTZLE',
-        (np.where(espn_events.event_player_1=='T.J. BRODIE', 'TJ BRODIE',
-        (np.where(espn_events.event_player_1=='MATTHEW IRWIN', 'MATT IRWIN',
-        (np.where(espn_events.event_player_1=='STEVE KAMPFER', 'STEVEN KAMPFER',
-        (np.where(espn_events.event_player_1=='STEVE KAMPFER', 'STEVEN KAMPFER',
-        (np.where(espn_events.event_player_1=='JEFFREY TRUCHON-VIEL', 'JEFFREY VIEL',
-        (np.where(espn_events.event_player_1=='ZACHARY JONES', 'ZAC JONES',
-        (np.where(espn_events.event_player_1=='MITCH MARNER', 'MITCHELL MARNER',
-        (np.where(espn_events.event_player_1=='MATHEW DUMBA', 'MATT DUMBA',
-        (np.where(espn_events.event_player_1=='JOSHUA MORRISSEY', 'JOSH MORRISSEY',
-        (np.where(espn_events.event_player_1=='P K SUBBAN', 'P.K. SUBBAN',
-        (np.where(espn_events.event_player_1=='EGOR SHARANGOVICH', 'YEGOR SHARANGOVICH',
-        (np.where(espn_events.event_player_1=='MAXIME COMTOIS', 'MAX COMTOIS',
-        (np.where(espn_events.event_player_1=='NICHOLAS CAAMANO', 'NICK CAAMANO',
-        (np.where(espn_events.event_player_1=='DANIEL CARCILLO', 'DAN CARCILLO',
-        (np.where(espn_events.event_player_1=='ALEXANDER OVECHKIN', 'ALEX OVECHKIN',
-        (np.where(espn_events.event_player_1=='MICHAEL CAMMALLERI', 'MIKE CAMMALLERI',
-        (np.where(espn_events.event_player_1=='DAVE STECKEL', 'DAVID STECKEL',
-        (np.where(espn_events.event_player_1=='JIM DOWD', 'JAMES DOWD', 
-        (np.where(espn_events.event_player_1=='MAXIME TALBOT', 'MAX TALBOT',
-        (np.where(espn_events.event_player_1=='MIKE ZIGOMANIS', 'MICHAEL ZIGOMANIS',
-        (np.where(espn_events.event_player_1=='VINNY PROSPAL', 'VACLAV PROSPAL',
-        (np.where(espn_events.event_player_1=='MIKE YORK', 'MICHAEL YORK',
-        (np.where(espn_events.event_player_1=='JACOB DOWELL', 'JAKE DOWELL',
-        (np.where(espn_events.event_player_1=='MICHAEL RUPP', 'MIKE RUPP',
-        (np.where(espn_events.event_player_1=='ALEXEI KOVALEV', 'ALEX KOVALEV',
-        (np.where(espn_events.event_player_1=='SLAVA KOZLOV', 'VYACHESLAV KOZLOV',
-        (np.where(espn_events.event_player_1=='JEFF HAMILTON', 'JEFFREY HAMILTON',
-        (np.where(espn_events.event_player_1=='JOHNNY POHL', 'JOHN POHL',
-        (np.where(espn_events.event_player_1=='DANIEL GIRARDI', 'DAN GIRARDI',
-        (np.where(espn_events.event_player_1=='NIKOLAI ZHERDEV', 'NIKOLAY ZHERDEV',
-        (np.where(espn_events.event_player_1=='J.P. DUMONT', 'J-P DUMONT',
-        (np.where(espn_events.event_player_1=='DWAYNE KING', 'DJ KING',
-        (np.where(espn_events.event_player_1=='JOHN ODUYA', 'JOHNNY ODUYA',
-        (np.where(espn_events.event_player_1=='ROBERT SCUDERI', 'ROB SCUDERI',
-        (np.where(espn_events.event_player_1=='DOUG MURRAY', 'DOUGLAS MURRAY',
-        (np.where(espn_events.event_player_1=='VACLAV PROSPAL', 'VINNY PROSPAL',
-        (np.where(espn_events.event_player_1=='RICH PEVERLY', 'RICH PEVERLEY',
-        espn_events.event_player_1.str.strip()
-                 ))))))))))))))))))))))))))))))))))))))))))))
-                 ))))))))))))))))))))))))))))))))))))))))))
-
-        espn_events = espn_events.assign(version = 
+    espn_events['event_player_1'] = (np.where(espn_events['event_player_1']== "JANIS MOSER" , "J.J. MOSER",
+    (np.where(espn_events['event_player_1']== "NICHOLAS PAUL" , "NICK PAUL",
+    (np.where(espn_events['event_player_1']== "JACOB MIDDLETON" , "JAKE MIDDLETON",
+    (np.where(espn_events['event_player_1']== "TOMMY NOVAK" , "THOMAS NOVAK",
+    espn_events['event_player_1']))))))))
+    
+    espn_events = espn_events.assign(version = 
+                       (np.where(
+                       (espn_events.event==espn_events.event.shift()) & 
+                       (espn_events.event_player_1==espn_events.event_player_1.shift()) &
+                       (espn_events.event_player_1!='') &
+                       (espn_events.game_seconds==espn_events.game_seconds.shift()),
+                        1, 0)))
+    
+    espn_events = espn_events.assign(version = 
                            (np.where(
-                           (espn_events.event==espn_events.event.shift()) & 
-                           (espn_events.event_player_1==espn_events.event_player_1.shift()) &
+                           (espn_events.event==espn_events.event.shift(2)) & 
+                           (espn_events.event_player_1==espn_events.event_player_1.shift(2)) &
+                           (espn_events.game_seconds==espn_events.game_seconds.shift(2)) & 
                            (espn_events.event_player_1!='') &
-                           (espn_events.game_seconds==espn_events.game_seconds.shift()),
-                            1, 0)))
+                           (~espn_events.description.str.contains('Penalty Shot')),
+                            2, espn_events.version)))
+    
+    espn_events = espn_events.assign(version = 
+                           (np.where(
+                           (espn_events.event==espn_events.event.shift(3)) & 
+                           (espn_events.event_player_1==espn_events.event_player_1.shift(3)) &
+                           (espn_events.game_seconds==espn_events.game_seconds.shift(3)) & 
+                           (espn_events.event_player_1!=''),
+                            3, espn_events.version)))
+    
+    espn_events['espn_id'] = int(espn_game_id)
+    
+    espn_events['event_player_1'] = espn_events['event_player_1'].str.strip()
+    
+    espn_events['event_player_1'] = espn_events['event_player_1'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
+    
+    #espn_events = espn_events.assign(event_player_1 = np.where(
+    #espn_events.event_player_1=='ALEX BURROWS', 'ALEXANDRE BURROWS', espn_events.event_player_1))
+    
+    global look
+    look = espn_events
+    
+    espn_events['coords_x'] = np.where(espn_events['coords_x']>99, 99, espn_events['coords_x'])
+    espn_events['coords_y'] = np.where(espn_events['coords_y']<(-42), (-42), espn_events['coords_y'])
 
-        espn_events = espn_events.assign(version = 
-                               (np.where(
-                               (espn_events.event==espn_events.event.shift(2)) & 
-                               (espn_events.event_player_1==espn_events.event_player_1.shift(2)) &
-                               (espn_events.game_seconds==espn_events.game_seconds.shift(2)) & 
-                               (espn_events.event_player_1!='') &
-                               (~espn_events.description.str.contains('Penalty Shot')),
-                                2, espn_events.version)))
-
-        espn_events = espn_events.assign(version = 
-                               (np.where(
-                               (espn_events.event==espn_events.event.shift(3)) & 
-                               (espn_events.event_player_1==espn_events.event_player_1.shift(3)) &
-                               (espn_events.game_seconds==espn_events.game_seconds.shift(3)) & 
-                               (espn_events.event_player_1!=''),
-                                3, espn_events.version)))
-
-        espn_events['espn_id'] = int(espn_game_id)
-
-        espn_events['event_player_1'] = espn_events['event_player_1'].str.strip()
-
-        #espn_events = espn_events.assign(event_player_1 = np.where(
-        #espn_events.event_player_1=='ALEX BURROWS', 'ALEXANDRE BURROWS', espn_events.event_player_1))
-
-        global look
-        look = espn_events
-
-        espn_events['coords_x'] = np.where(espn_events['coords_x']>99, 99, espn_events['coords_x'])
-        espn_events['coords_y'] = np.where(espn_events['coords_y']<(-42), (-42), espn_events['coords_y'])
-
-        if drop_description == True:
-            return espn_events.drop(columns = 'description')
-        else:
-            return espn_events
-        
+    if drop_description == True:
+        return espn_events.drop(columns = 'description')
     else:
-        print('This game had like 1 ESPN event, not going to bother.')
-        raise IndexError
+        return espn_events
 
 def scrape_espn_ids_single_game(game_date, home_team, away_team):
     gamedays = pd.DataFrame()
@@ -1892,17 +1878,19 @@ def scrape_espn_ids_single_game(game_date, home_team, away_team):
     
     this_date = (game_date)
     url = 'http://www.espn.com/nhl/scoreboard?date=' + this_date.replace("-", "")
-    page = requests.get(url, timeout = 500)
+    page = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout = 500)
     soup = BeautifulSoup(page.content, parser = 'lxml')
-    soup_found = soup.find_all('a', {'class':['AnchorLink truncate', 'AnchorLink Button Button--sm Button--anchorLink Button--alt mb4 w-100'], 'href':[re.compile("/nhl/team/_/name/"), re.compile("game/_")]})
+    soup_found = soup.find_all('a', {'class':['AnchorLink truncate', 
+                             'AnchorLink Button Button--sm Button--anchorLink Button--alt mb4 w-100',
+                            'AnchorLink Button Button--sm Button--anchorLink Button--alt mb4 w-100 mr2'], 'href':[re.compile("/nhl/team/_/name/"), re.compile("game/_")]})
     at = []
     ht = []
     gids = []
     fax = pd.DataFrame()
     #print(str(i))
     for i in range (0, (int(len(soup_found)/3))):
-        away = soup_found[0 + (i * 3)]['href'].rsplit('/')[-1].replace('-', ' ').upper()
-        home = soup_found[1 + (i * 3)]['href'].rsplit('/')[-1].replace('-', ' ').upper()
+        away = soup_found[0 + (i * 3)]['href'].rsplit('/')[-2].upper()
+        home = soup_found[1 + (i * 3)]['href'].rsplit('/')[-2].upper()
         espnid = soup_found[2 + (i * 3)]['href'].split('gameId/', 1)[1]
         at.append(away)
         ht.append(home)
@@ -1914,7 +1902,7 @@ def scrape_espn_ids_single_game(game_date, home_team, away_team):
     espn_id = gids,
     game_date = pd.to_datetime(this_date))
 
-    gamedays = gamedays.append(fax)
+    gamedays = gamedays._append(fax)
 
     gamedays = gamedays.assign(
         home_team = np.where(gamedays.home_team=='ST LOUIS BLUES', 'ST. LOUIS BLUES', gamedays.home_team),
@@ -1925,6 +1913,27 @@ def scrape_espn_ids_single_game(game_date, home_team, away_team):
      #   home_team = np.where(gamedays.home_team=='WINNIPEG JETS', 'ATLANTA THRASHERS', gamedays.home_team),
       #  away_team = np.where(gamedays.away_team=='WINNIPEG JETS', 'ATLANTA THRASHERS', gamedays.away_team),
        # espn_id = gamedays.espn_id.astype(int))
+
+    gamedays = gamedays.assign(
+        home_team = np.where(gamedays.home_team=='TB', 'TBL',
+                    np.where(gamedays.home_team=='T.B', 'TBL',
+                    np.where(gamedays.home_team=='L.A', 'LAK',
+                    np.where(gamedays.home_team=='LA', 'LAK',
+                    np.where(gamedays.home_team=='S.J', 'SJS',
+                    np.where(gamedays.home_team=='SJ', 'SJS',
+                    np.where(gamedays.home_team=='N.J', 'NJD',
+                    np.where(gamedays.home_team=='NJ', 'NJD',
+                    gamedays.home_team)))))))),
+        away_team = np.where(gamedays.away_team=='TB', 'TBL',
+                    np.where(gamedays.away_team=='T.B', 'TBL',
+                    np.where(gamedays.away_team=='L.A', 'LAK',
+                    np.where(gamedays.away_team=='LA', 'LAK',
+                    np.where(gamedays.away_team=='S.J', 'SJS',
+                    np.where(gamedays.away_team=='SJ', 'SJS',
+                    np.where(gamedays.away_team=='N.J', 'NJD',
+                    np.where(gamedays.away_team=='NJ', 'NJD',
+                    gamedays.away_team)))))))),
+        espn_id = gamedays.espn_id.astype(int))
     
     gamedays = gamedays[(gamedays.game_date==this_date) & (gamedays.home_team==home_team) & (gamedays.away_team==away_team)]
         
@@ -2202,11 +2211,11 @@ def merge_and_prepare(events, shifts):
     game = game.assign(home_skaters = 
                        np.where(game.home_on_1!='\xa0', 1, 0) + np.where(game.home_on_2!='\xa0', 1, 0) + np.where(game.home_on_3!='\xa0', 1, 0) + np.where(game.home_on_4!='\xa0', 1, 0) + 
                        np.where(game.home_on_5!='\xa0', 1, 0) + np.where(game.home_on_6!='\xa0', 1, 0) + np.where(game.home_on_7!='\xa0', 1, 0) + np.where(game.home_on_8!='\xa0', 1, 0) +
-                       np.where(game.home_on_9!='\xa0', 1, 0) - np.where((game.home_goalie!='\xa0') & (game.period<5), 1, 0),
+                       np.where(game.home_on_9!='\xa0', 1, 0) - np.where((game.home_goalie!='\xa0') & ((game.period<5) | (game.game_id.astype(str).str[5].astype(int)==3)), 1, 0),
                        away_skaters = 
                        np.where(game.away_on_1!='\xa0', 1, 0) + np.where(game.away_on_2!='\xa0', 1, 0) + np.where(game.away_on_3!='\xa0', 1, 0) + np.where(game.away_on_4!='\xa0', 1, 0) + 
                        np.where(game.away_on_5!='\xa0', 1, 0) + np.where(game.away_on_6!='\xa0', 1, 0) + np.where(game.away_on_7!='\xa0', 1, 0) + np.where(game.away_on_8!='\xa0', 1, 0) +
-                       np.where(game.away_on_9!='\xa0', 1, 0) - np.where((game.away_goalie!='\xa0') & (game.period<5), 1, 0))
+                       np.where(game.away_on_9!='\xa0', 1, 0) - np.where((game.away_goalie!='\xa0') & ((game.period<5) | (game.game_id.astype(str).str[5].astype(int)==3)), 1, 0))
 
     game = game.assign(home_skater_temp = 
                 np.where((game.home_goalie=='\xa0') , 'E', game.home_skaters),
@@ -2215,8 +2224,8 @@ def merge_and_prepare(events, shifts):
 
     game = game.assign(game_strength_state = (game.home_skater_temp.astype(str)) + 'v' + (game.away_skater_temp.astype(str)),
                       event_zone = np.where(game.event_zone is not None, game.event_zone.str.replace(". Zone", ""), ''),
-                      home_score = np.cumsum(np.where((game.event.shift()=='GOAL') & (game.period<5) & (game.event_team.shift()==game.home_team), 1, 0)),
-                      away_score = np.cumsum(np.where((game.event.shift()=='GOAL') & (game.period<5) & (game.event_team.shift()==game.away_team), 1, 0))).drop(
+                      home_score = np.cumsum(np.where((game.event.shift()=='GOAL') & (((game.period<5) | (game.game_id.astype(str).str[5].astype(int)==3))) & (game.event_team.shift()==game.home_team), 1, 0)),
+                      away_score = np.cumsum(np.where((game.event.shift()=='GOAL') & (((game.period<5) | (game.game_id.astype(str).str[5].astype(int)==3))) & (game.event_team.shift()==game.away_team), 1, 0))).drop(
         columns = ['home_skater_temp', 'away_skater_temp'])
 
     game = game.assign(game_score_state = (game.home_score.astype(str)) + 'v' + (game.away_score.astype(str)),
@@ -2228,7 +2237,7 @@ def merge_and_prepare(events, shifts):
 
     so = game[game.period==5]
 
-    if len(so)>0:
+    if len(so)>0 and int(game.game_id.astype(str).str[5].iloc[0]) != 3:
         game = game[game.period<5]
         home = roster[roster.team=='home'].rename(columns = {'teamnum':'home_on_ice', 'Name':'home_goalie_name'}).loc[:, ['home_goalie_name', 'home_on_ice']]
         away = roster[roster.team=='away'].rename(columns = {'teamnum':'away_on_ice', 'Name':'away_goalie_name'}).loc[:, ['away_goalie_name', 'away_on_ice']]
@@ -2382,7 +2391,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                 try:
                     shifts = scrape_html_shifts(season, small_id)
                     finalized = merge_and_prepare(events, shifts)
-                    full = full.append(finalized)
+                    full = full._append(finalized)
                     second_time = time.time()
                 except IndexError as e:
                     print('There was no shift data for this game. Error: ' + str(e))
@@ -2394,7 +2403,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                     ).drop(
                     columns = ['original_time', 'other_team', 'strength', 'event_player_str', 'version', 'hometeamfull', 'awayteamfull']
                     ).assign(game_warning = 'NO SHIFT DATA.')
-                    full = full.append(fixed_events)
+                    full = full._append(fixed_events)
                 print('Successfully scraped ' + str(game_id) + '. Coordinates sourced from the API.')
                 print("This game took " + str(round(second_time - first_time, 2)) + " seconds.")
                 i = i + 1
@@ -2405,8 +2414,8 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                 print('The API gave us trouble with: ' + str(game_id) + '. Let us try ESPN.')
                 
                 try:
-                    home_team = single['home_team'].iloc[0]
-                    away_team = single['away_team'].iloc[0]
+                    home_team = single['home_team_abbreviated'].iloc[0]
+                    away_team = single['away_team_abbreviated'].iloc[0]
                     game_date = single['game_date'].iloc[0]
                     try:
                         espn_id = scrape_espn_ids_single_game(str(game_date.date()), home_team, away_team).espn_id.iloc[0]
@@ -2424,7 +2433,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                     try:
                         shifts = scrape_html_shifts(season, small_id)
                         finalized = merge_and_prepare(events, shifts)
-                        full = full.append(finalized)
+                        full = full._append(finalized)
                         second_time = time.time()
                     except IndexError as e:
                         print('There was no shift data for this game. Error: ' + str(e))
@@ -2437,7 +2446,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                         columns = ['original_time', 'other_team', 'strength', 'event_player_str', 'version', 'hometeamfull', 'awayteamfull']
                         ).assign(game_warning = 'NO SHIFT DATA', season = season)
                         fixed_events['coordinate_source'] = 'espn'
-                        full = full.append(fixed_events)
+                        full = full._append(fixed_events)
                     second_time = time.time()
                     # Fix this so it doesn't say sourced from ESPN if no coords.
                     if single.equals(events):
@@ -2491,7 +2500,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                         duped_coords = duped_coords.assign(coords_x = np.where(pd.isna(duped_coords.coords_x_x), duped_coords.coords_x_y, duped_coords.coords_x_x),
                                           coords_y = np.where(pd.isna(duped_coords.coords_y_x), duped_coords.coords_y_y, duped_coords.coords_y_x))
                         col_list = list(api_coords.columns)
-                        col_list.append('source')
+                        col_list._append('source')
                         duped_coords = duped_coords.loc[:, col_list]
                         duped_coords = duped_coords[duped_coords.event.isin(['SHOT', 'HIT', 'BLOCK', 'MISS', 'GIVE', 'TAKE', 'GOAL', 'PENL', 'FAC'])]
                         duped_coords = duped_coords[~duped_coords.duplicated()]
@@ -2517,7 +2526,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                     try:
                         shifts = scrape_html_shifts(season, small_id)
                         finalized = merge_and_prepare(events, shifts)
-                        full = full.append(finalized)
+                        full = full._append(finalized)
                         second_time = time.time()
                     except IndexError as e:
                         print('There was no shift data for this game. Error: ' + str(e))
@@ -2529,7 +2538,7 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
                         ).drop(
                         columns = ['original_time', 'other_team', 'strength', 'event_player_str', 'version', 'hometeamfull', 'awayteamfull']
                         ).assign(game_warning = 'NO SHIFT DATA', season = season)
-                        full = full.append(fixed_events)
+                        full = full._append(fixed_events)
                     second_time = time.time()
                     # Fix this so it doesn't say sourced from ESPN if no coords.
                     print('Successfully scraped ' + str(game_id) + '. Coordinates sourced from ESPN.')
@@ -2681,7 +2690,7 @@ def full_scrape(game_id_list, shift = False):
             print('You missed the following games: ' + str(missing))
             print('Let us try scraping each of them one more time.')
             retry = full_scrape_1by1(missing)
-            df = df.append(retry)
+            df = df._append(retry)
             return df
         else:
             return df
