@@ -6,7 +6,7 @@
 
 This is a package built for scraping two data sources:
 
-1. The NHL's Play-by-Play Reports, which come in the form of HTML/API reports from the NHL and XML reports from ESPN.
+1. The NHL's Play-by-Play Reports, which come in the form of HTML/API reports from the NHL and JSON reports from ESPN.
 
 2. Elite Prospects, an extremely valuable website which makes hockey data for thousands of leagues available to the public. 
 
@@ -34,18 +34,13 @@ If you're interested in using the Elite Prospects scraper, import that module us
 
 ---
 
-### scrape_schedule(start_date, end_date)
+### scrape_full_schedule(start_date, end_date)
 
-Returns the NHL's schedule from the API for all games played between a start date and an end date.
-
-<ul>
-    <li>start_date: The first date in the list of game dates that you would like to scrape. Enter as a string in "YYYY-MM-DD" format.</li>
-    <li>end_date: The last date in the list of game dates that you would like to scrape. Enter as a string in "YYYY-MM-DD" format.</li>
-    </ul>
+Returns the NHL's schedule from the API for all games for the 2023-2024 NHL season.
     
 Example:
 
-<code>tdhnhlscrape.scrape_schedule("2021-01-01", "2021-05-20")</code>
+<code>tdhnhlscrape.scrape_full_schedule()</code>
 
 ---
 
@@ -55,19 +50,11 @@ Returns a dataframe containing play-by-play data for a list of game ids.
 
 <ul>
     <li>game_id_list: A list of NHL game ids.</li>
-    <li>shift: Shift the coordinate source to ESPN. By default, the program will attempt to scrape the NHL's API for location coordinates first.</li>
     </ul>
     
 Example: 
 
-<code>tdhnhlscrape.full_scrape([2020020014, 2020020015, 2020020016])</code>
-
-Combine the two functions and scrape the entire 2021 regular season:
-
-- <code>schedule_2021 = tdhnhlscrape.scrape_schedule("2021-01-01", "2021-05-20")</code>
-- <code>schedule_2021 = schedule_2021[schedule_2021.type=='R']</code>
-- <code>game_list_2021 = list(schedule_2021.ID)</code>
-- <code>pbp_2021 = tdhnhlscrape.full_scrape(game_list_2021)</code>
+<code>tdhnhlscrape.full_scrape([2023020179, 2023020180, 2023020181])</code>
  
 
 # User-End Functions (Elite Prospects Scraper)
