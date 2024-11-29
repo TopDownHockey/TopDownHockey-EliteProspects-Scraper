@@ -1687,7 +1687,9 @@ def scrape_espn_events(espn_game_id, drop_description = True):
 
     clock_df = clock_df[~pd.isna(clock_df.clock)]
 
-    coords_df = pd.DataFrame(json.loads(str(soup).split('plays":')[1].split(',"st":1')[0].split(',"st":2')[0]))
+    # Needed to add .split(',"st":3')[0] for playoffs
+
+    coords_df = pd.DataFrame(json.loads(str(soup).split('plays":')[1].split(',"st":1')[0].split(',"st":2')[0].split(',"st":3')[0]))
 
     clock_df = clock_df.assign(
         clock = clock_df.clock.apply(lambda x: x['displayValue'])
@@ -1817,6 +1819,12 @@ def scrape_espn_events(espn_game_id, drop_description = True):
     (np.where(espn_events['event_player_1']== "JACOB MIDDLETON" , "JAKE MIDDLETON",
     (np.where(espn_events['event_player_1']== "TOMMY NOVAK" , "THOMAS NOVAK",
     espn_events['event_player_1']))))))))
+
+    espn_events['event_player_1'] = (np.where(espn_events['event_player_1']== "PAT MAROON" , "PATRICK MAROON",
+    (np.where(espn_events['event_player_1']== "JOHHNY BEECHER" , "JOHN BEECHER",
+    (np.where(espn_events['event_player_1']== "ALEXANDER BARKOV" , "ALEKSANDER BARKOV",
+    (np.where(espn_events['event_player_1']== "TOMMY NOVAK" , "THOMAS NOVAK",
+    espn_events['event_player_1']))))))))
     
     espn_events = espn_events.assign(version = 
                        (np.where(
@@ -1864,6 +1872,7 @@ def scrape_espn_events(espn_game_id, drop_description = True):
         return espn_events
 
 def scrape_espn_ids_single_game(game_date, home_team, away_team):
+    
     gamedays = pd.DataFrame()
     
     if home_team == 'ATLANTA THRASHERS':
@@ -1888,32 +1897,31 @@ def scrape_espn_ids_single_game(game_date, home_team, away_team):
     gids = []
     fax = pd.DataFrame()
     #print(str(i))
-    for i in range (0, (int(len(soup_found)/3))):
-        away = soup_found[0 + (i * 3)]['href'].rsplit('/')[-2].upper()
-        home = soup_found[1 + (i * 3)]['href'].rsplit('/')[-2].upper()
-        espnid = soup_found[2 + (i * 3)]['href'].split('gameId/', 1)[1]
+    for i in range (0, ((len(soup_found)))):
+        away = soup_found[i]['href'].rsplit('/')[-1].split('-')[0].upper()
+        home = soup_found[i]['href'].rsplit('/')[-1].split('-')[-1].upper()
+        espnid = soup_found[i]['href'].rsplit('/')[-2]
         at.append(away)
         ht.append(home)
         gids.append(espnid)
-
+    
     fax = fax.assign(
     away_team = at,
     home_team = ht,
     espn_id = gids,
     game_date = pd.to_datetime(this_date))
-
+    
     gamedays = gamedays._append(fax)
 
+    gamedays = gamedays[gamedays.espn_id!='gameId']
+    
     gamedays = gamedays.assign(
         home_team = np.where(gamedays.home_team=='ST LOUIS BLUES', 'ST. LOUIS BLUES', gamedays.home_team),
         away_team = np.where(gamedays.away_team=='ST LOUIS BLUES', 'ST. LOUIS BLUES', gamedays.away_team),
-        espn_id = gamedays.espn_id.astype(int))
+        espn_id = gamedays.espn_id.str.split('/').str[0].astype(int)
     
-    #gamedays = gamedays.assign(
-     #   home_team = np.where(gamedays.home_team=='WINNIPEG JETS', 'ATLANTA THRASHERS', gamedays.home_team),
-      #  away_team = np.where(gamedays.away_team=='WINNIPEG JETS', 'ATLANTA THRASHERS', gamedays.away_team),
-       # espn_id = gamedays.espn_id.astype(int))
-
+    )
+    
     gamedays = gamedays.assign(
         home_team = np.where(gamedays.home_team=='TB', 'TBL',
                     np.where(gamedays.home_team=='T.B', 'TBL',
@@ -1935,7 +1943,91 @@ def scrape_espn_ids_single_game(game_date, home_team, away_team):
                     gamedays.away_team)))))))),
         espn_id = gamedays.espn_id.astype(int))
     
-    gamedays = gamedays[(gamedays.game_date==this_date) & (gamedays.home_team==home_team) & (gamedays.away_team==away_team)]
+    gamedays = gamedays.assign(
+        away_team = np.where(gamedays.away_team=='DUCKS', 'ANA',
+                    np.where(gamedays.away_team=='COYOTES', 'ARI',
+                    np.where(gamedays.away_team=='BRUINS', 'BOS',
+                    np.where(gamedays.away_team=='SABRES', 'BUF',
+                    np.where(gamedays.away_team=='FLAMES', 'CGY',
+                    np.where(gamedays.away_team=='HURRICANES', 'CAR',
+                    np.where(gamedays.away_team=='BLACKHAWKS', 'CHI',
+                    np.where(gamedays.away_team=='AVALANCHE', 'COL',
+                    np.where(gamedays.away_team=='BLUE', 'CBJ',
+                    np.where(gamedays.away_team=='JACKETS', 'CBJ',
+                    np.where(gamedays.away_team=='STARS', 'DAL',
+                    np.where(gamedays.away_team=='RED', 'DET',
+                    np.where(gamedays.away_team=='WINGS', 'DET',
+                    np.where(gamedays.away_team=='OILERS', 'EDM',
+                    np.where(gamedays.away_team=='PANTHERS', 'FLA',
+                    np.where(gamedays.away_team=='KINGS', 'LAK',
+                    np.where(gamedays.away_team=='WILD', 'MIN',
+                    np.where(gamedays.away_team=='CANADIENS', 'MTL',
+                    np.where(gamedays.away_team=='PREDATORS', 'NSH',
+                    np.where(gamedays.away_team=='DEVILS', 'NJD',
+                    np.where(gamedays.away_team=='ISLANDERS', 'NYI',
+                    np.where(gamedays.away_team=='RANGERS', 'NYR',
+                    np.where(gamedays.away_team=='SENATORS', 'OTT',
+                    np.where(gamedays.away_team=='FLYERS', 'PHI',
+                    np.where(gamedays.away_team=='PENGUINS', 'PIT',
+                    np.where(gamedays.away_team=='SHARKS', 'SJS',
+                    np.where(gamedays.away_team=='KRAKEN', 'SEA',
+                    np.where(gamedays.away_team=='BLUES', 'STL',
+                    np.where(gamedays.away_team=='LIGHTNING', 'TBL',
+                    np.where(gamedays.away_team=='LEAFS', 'TOR',
+                    np.where(gamedays.away_team=='MAPLE', 'TOR',
+                    np.where(gamedays.away_team=='CANUCKS', 'VAN',
+                    np.where(gamedays.away_team=='GOLDEN', 'VGK',
+                    np.where(gamedays.away_team=='KNIGHTS', 'VGK',
+                    np.where(gamedays.away_team=='CAPITALS', 'WSH',
+                    np.where(gamedays.away_team=='JETS', 'WPG',
+                    np.where(gamedays.away_team=='CLUB', 'UTA',
+                    np.where(gamedays.away_team=='HOCKEY', 'UTA', 'mistake'
+                            ))))))))))))))))))))))))))))))))))))))
+    )
+
+    gamedays = gamedays.assign(
+        home_team = np.where(gamedays.home_team=='DUCKS', 'ANA',
+                    np.where(gamedays.home_team=='COYOTES', 'ARI',
+                    np.where(gamedays.home_team=='BRUINS', 'BOS',
+                    np.where(gamedays.home_team=='SABRES', 'BUF',
+                    np.where(gamedays.home_team=='FLAMES', 'CGY',
+                    np.where(gamedays.home_team=='HURRICANES', 'CAR',
+                    np.where(gamedays.home_team=='BLACKHAWKS', 'CHI',
+                    np.where(gamedays.home_team=='AVALANCHE', 'COL',
+                    np.where(gamedays.home_team=='BLUE', 'CBJ',
+                    np.where(gamedays.home_team=='JACKETS', 'CBJ',
+                    np.where(gamedays.home_team=='STARS', 'DAL',
+                    np.where(gamedays.home_team=='RED', 'DET',
+                    np.where(gamedays.home_team=='WINGS', 'DET',
+                    np.where(gamedays.home_team=='OILERS', 'EDM',
+                    np.where(gamedays.home_team=='PANTHERS', 'FLA',
+                    np.where(gamedays.home_team=='KINGS', 'LAK',
+                    np.where(gamedays.home_team=='WILD', 'MIN',
+                    np.where(gamedays.home_team=='CANADIENS', 'MTL',
+                    np.where(gamedays.home_team=='PREDATORS', 'NSH',
+                    np.where(gamedays.home_team=='DEVILS', 'NJD',
+                    np.where(gamedays.home_team=='ISLANDERS', 'NYI',
+                    np.where(gamedays.home_team=='RANGERS', 'NYR',
+                    np.where(gamedays.home_team=='SENATORS', 'OTT',
+                    np.where(gamedays.home_team=='FLYERS', 'PHI',
+                    np.where(gamedays.home_team=='PENGUINS', 'PIT',
+                    np.where(gamedays.home_team=='SHARKS', 'SJS',
+                    np.where(gamedays.home_team=='KRAKEN', 'SEA',
+                    np.where(gamedays.home_team=='BLUES', 'STL',
+                    np.where(gamedays.home_team=='LIGHTNING', 'TBL',
+                    np.where(gamedays.home_team=='MAPLE', 'TOR',
+                    np.where(gamedays.home_team=='LEAFS', 'TOR',
+                    np.where(gamedays.home_team=='CANUCKS', 'VAN',
+                    np.where(gamedays.home_team=='GOLDEN', 'VGK',
+                    np.where(gamedays.home_team=='KNIGHTS', 'VGK',
+                    np.where(gamedays.home_team=='CAPITALS', 'WSH',
+                    np.where(gamedays.home_team=='JETS', 'WPG', 
+                    np.where(gamedays.home_team=='CLUB', 'UTA', 
+                    np.where(gamedays.home_team=='HOCKEY', 'UTA', 'mistake'
+                            ))))))))))))))))))))))))))))))))))))))
+    )
+    
+    gamedays = gamedays[(gamedays.game_date==this_date) & (gamedays.home_team==home_team) & (gamedays.away_team==away_team)] 
         
     return(gamedays)
 
@@ -2348,7 +2440,7 @@ def fix_missing(single, event_coords, events):
     
     return(events)
 
-def full_scrape_1by1(game_id_list, shift_to_espn = False):
+def full_scrape_1by1(game_id_list, shift_to_espn = True):
     
     global single
     global event_coords
@@ -2360,12 +2452,13 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
     
     i = 0
     
-    while i in range(0, len(game_id_list)):
+    while i in range(0, len(game_id_list)) and len(game_id_list)>0:
        
         # First thing to try: Scraping HTML events
         
         try:
             first_time = time.time()
+            print(game_id_list[i]) 
             game_id = game_id_list[i]
             print('Attempting scrape for: ' + str(game_id))
             season = str(int(str(game_id)[:4])) + str(int(str(game_id)[:4]) + 1)
@@ -2590,6 +2683,11 @@ def full_scrape_1by1(game_id_list, shift_to_espn = False):
             
         except ValueError as e:
             print(str(game_id) + ' has an issue with the HTML Report. Here is the error: ' + str(e))
+            i = i + 1
+            continue
+
+        except KeyError as k:
+            print(str(game_id) + 'gave some kind of Key Error. Here is the error: ' + str(e))
             i = i + 1
             continue
             
