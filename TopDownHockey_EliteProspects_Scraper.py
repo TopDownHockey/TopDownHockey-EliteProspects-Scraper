@@ -252,7 +252,7 @@ def get_info(link):
     """
     A function that is built strictly for the back end and should not be run by the user.
     """
-    
+
     page = requests.get(link, timeout = 500)
     soup = BeautifulSoup(page.content, "html.parser")
 
@@ -265,99 +265,80 @@ def get_info(link):
         soup = BeautifulSoup(page.content, "html.parser")
         time.sleep(60)
 
+    lis = soup.find_all('li')
+
+    relevant_lis = [li for li in lis if li.find('span') is not None]
+
+    # player
+    
     if soup.find("title") != None:
-        player = soup.find("title").string.replace(" - Elite Prospects" ,"")
-
-    else: player = "-"
-        
-    if soup.find("div", {"class":"order-11 ep-list__item ep-list__item--in-card-body ep-list__item--is-compact"})!=None:
-        rights = soup.find("div", {"class":"order-11 ep-list__item ep-list__item--in-card-body ep-list__item--is-compact"}
-         ).find("div", {"class":"col-xs-12 col-18 text-right p-0"}).find("span").string.split("\n")[1].split("/")[0].strip()
-        status = soup.find("div", {"class":"order-11 ep-list__item ep-list__item--in-card-body ep-list__item--is-compact"}
-         ).find("div", {"class":"col-xs-12 col-18 text-right p-0"}).find("span").string.split("\n")[1].split("/")[1].strip()
+        player = soup.find("title").string.replace(' - Stats, Contract, Salary & More', '')
     else:
-        rights = "-"
-        status = "-"
-                 
-    if (soup.find("div", {"class":"col-xs-12 col-17 text-right p-0 ep-text-color--black"}))!= None:
-        if 'dob' in (soup.find("div", {"class":"col-xs-12 col-17 text-right p-0 ep-text-color--black"})).find("a")['href']:
-            dob = soup.find("div", {"class":"col-xs-12 col-17 text-right p-0 ep-text-color--black"}).find("a")['href'].split("dob=", 1)[1].split("&sort", 1)[0]
-        else: 
-            dob = "-"
-
+        player = '-'
+    
+    # status
+    
+    if [li for li in relevant_lis if li.find('span').text=='NHL Rights'] != []:
+        rights = [li for li in relevant_lis if li.find('span').text=='NHL Rights'][0].find('a').text.split(' /')[0]
     else:
-        dob = "-"
-
-    if soup.find("div", {"class":"order-6 order-sm-3 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}) != None:
-        if "cm" in soup.find("div", {"class":"order-6 order-sm-3 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                            ).find(
-        "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).string:
-            height = soup.find("div", {"class":"order-6 order-sm-3 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                              ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).string.split(" / ")[1].split("cm")[0].strip()
-        else: 
-            height = "-"
-
+        rights = '-'
+    
+    # rights
+    
+    if [li for li in relevant_lis if li.find('span').text=='NHL Rights'] != []:
+        status = [li for li in relevant_lis if li.find('span').text=='NHL Rights'][0].find('a').text.split(' / ')[1]
+    else:
+        status = '-'
+    
+    # dob
+    
+    if [li.find('a')['href'].split('dob=', 1)[1].split('&sort', 1)[0] for li in relevant_lis if li.span.text == 'Date of Birth'] != []:
+        dob = [li.find('a')['href'].split('dob=', 1)[1].split('&sort', 1)[0] for li in relevant_lis if li.span.text == 'Date of Birth'][0]
+    else:
+        dob = '-'
+    
+    # height
+    
+    if [li for li in relevant_lis if li.find('span').text=='Height'] != []:
+        height = [li for li in relevant_lis if li.find('span').text=='Height'][0].text.split('Height')[1].split(' cm')[0]
     else: 
-        height = "-"
-
-    if soup.find("div", {"class":"order-7 order-sm-5 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}) != None:
-        if soup.find("div", {"class":"order-7 order-sm-5 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                    ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).string.split("\n")[1].split("lbs")[0].strip() == '- / -':
-                weight = "-"
-        else: 
-            weight = soup.find("div", {"class":"order-7 order-sm-5 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                              ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).string.split("\n")[1].split("lbs")[0].strip()
-
-    else: weight = "-"
-
-    if soup.find("div", {"class":"order-2 order-sm-4 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                         ) != None:
-        if soup.find("div", {"class":"order-2 order-sm-4 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                         ).find(
-            "div", {"class":"col-xs-12 col-17 text-right p-0 ep-text-color--black"}).find("a") != None:
-
-            birthplace = soup.find("div", {"class":"order-2 order-sm-4 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                         ).find(
-                        "div", {"class":"col-xs-12 col-17 text-right p-0 ep-text-color--black"}).find("a").string.replace("\n", "").strip()
-
-        else: 
-            birthplace = "-"
+        height = '-'
+    
+    # weight
+    
+    if [li for li in relevant_lis if li.find('span').text=='Weight'] != []:
+        weight = [li for li in relevant_lis if li.find('span').text=='Weight'][0].text.split('Weight')[1].split(' cm')[0]
     else: 
-        birthplace = "-"
-
-    if soup.find("div", {"class":"order-3 order-sm-6 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}) != None:
-        if soup.find("div", {"class":"order-3 order-sm-6 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                    ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).find("a") != None:
-                nation = soup.find("div", {"class":"order-3 order-sm-6 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                                  ).find(
-                "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).find("a").string.replace("\n", "").strip()
-        else: nation = "-"
-
+        weight = '-'
+    
+    # birthplace
+    
+    if [li for li in relevant_lis if li.find('span').text=='Place of Birth'] != []:
+        birthplace = [li for li in relevant_lis if li.find('span').text=='Place of Birth'][0].text.split('Birth')[1]
     else:
-        nation = "-"
-
-    if soup.find("div", {"class":"order-8 order-sm-7 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}) !=None:
-        shoots = soup.find("div", {"class":"order-8 order-sm-7 ep-list__item ep-list__item--col-2 ep-list__item--in-card-body ep-list__item--is-compact"}
-                          ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0 ep-text-color--black"}).string.replace("\n", "").strip()
-
+        birthplace = '-'
+    
+    # nation
+    
+    if [li for li in relevant_lis if li.find('span').text=='Nation'] != []:
+        nation = [li for li in relevant_lis if li.find('span').text=='Nation'][0].text.split('Nation')[1]
     else:
-        shoots = "-"
-
-    if soup.find("div", {"class":"order-12 ep-list__item ep-list__item--in-card-body ep-list__item--is-compact"}) != None:
-        draft = soup.find("div", {"class":"order-12 ep-list__item ep-list__item--in-card-body ep-list__item--is-compact"}
-                         ).find(
-            "div", {"class":"col-xs-12 col-18 text-right p-0"}).find("a").string.replace("\n", "").strip()
-    else: 
-        draft = "-"
-
-    #height = np.where(height=="- / -", "-", height)
-
-    #print(player + " scraped!")
+        nation = '-'
+    
+    # shoots
+    
+    if [li for li in relevant_lis if li.find('span').text=='Shoots'] != []:
+        shoots = [li for li in relevant_lis if li.find('span').text=='Shoots'][0].text.split('Shoots')[1]
+    else:
+        shoots = '-'
+    
+    # draft
+    
+    if [li for li in relevant_lis if li.find('span').text=='Drafted'] != []:
+        draft = [li for li in relevant_lis if li.find('span').text=='Drafted'][0].text.split('Drafted')[1]
+    else:
+        draft = '-'
+    
     return(player, rights, status, dob, height, weight, birthplace, nation, shoots, draft, link)  
     
 def get_player_information(dataframe):
@@ -400,7 +381,8 @@ def get_player_information(dataframe):
         except (ConnectionError,
             HTTPError,
             ReadTimeout,
-            ConnectTimeout) as errormessage:
+            ConnectTimeout,
+            ValueError) as errormessage:
             print("You've been disconnected. Here's the error message:")
             print(errormessage)
             print("Luckily, everything you've scraped up to this point will still be safe.")
@@ -446,7 +428,7 @@ def get_league_skater_boxcars(league, seasons):
     
     if type(seasons) == str:
         single = getskaters(league, seasons)
-        output = output.append(single)
+        output = output._append(single)
         print("Scraping " + league + " data is complete. You scraped skater data from " + seasons + ".")
         return(output)
     
@@ -455,7 +437,7 @@ def get_league_skater_boxcars(league, seasons):
         for i in range(0, len(seasons)):
             try:
                 single = getskaters(league, seasons[i])
-                output = output.append(single)
+                output = output._append(single)
             except KeyboardInterrupt as e:
                 hidden_patrick = 4
                 error = e
@@ -463,7 +445,8 @@ def get_league_skater_boxcars(league, seasons):
             except (ConnectionError,
                 HTTPError,
                 ReadTimeout,
-                ConnectTimeout) as e:
+                ConnectTimeout,
+                ValueError) as e:
                 hidden_patrick = 5
                 error = e
                 return output
@@ -493,7 +476,7 @@ def get_league_goalie_boxcars(league, seasons):
     
     if type(seasons) == str:
         single = getgoalies(league, seasons)
-        output = output.append(single)
+        output = output._append(single)
         print("Scraping " + league + " data is complete. You scraped goalie data from " + seasons + ".")
         return(output)
     
@@ -502,7 +485,7 @@ def get_league_goalie_boxcars(league, seasons):
         for i in range(0, len(seasons)):
             try:
                 single = getgoalies(league, seasons[i])
-                output = output.append(single)
+                output = output._append(single)
             except KeyboardInterrupt as e:
                 hidden_patrick = 4
                 error = e
@@ -595,7 +578,7 @@ def get_goalies(leagues, seasons):
         for i in range (0, len(leagues)):
             try:
                 targetleague = get_league_goalie_boxcars(leagues[i], seasons)
-                leaguesall = leaguesall.append(targetleague)
+                leaguesall = leaguesall._append(targetleague)
                 if hidden_patrick == 4:
                     raise KeyboardInterrupt
                 if hidden_patrick == 5:
@@ -631,7 +614,7 @@ def get_goalies(leagues, seasons):
         for i in range (0, len(leagues)):
             try:
                 targetleague = get_league_goalie_boxcars(leagues[i], seasons)
-                leaguesall = leaguesall.append(targetleague)
+                leaguesall = leaguesall._append(targetleague)
                 if hidden_patrick == 4:
                     raise KeyboardInterrupt
                 if hidden_patrick == 5:
@@ -747,7 +730,7 @@ def get_skaters(leagues, seasons):
         for i in range (0, len(leagues)):
             try:
                 targetleague = get_league_skater_boxcars(leagues[i], seasons)
-                leaguesall = leaguesall.append(targetleague)
+                leaguesall = leaguesall._append(targetleague)
                 if hidden_patrick == 4:
                     raise KeyboardInterrupt
                 if hidden_patrick == 5:
@@ -783,7 +766,7 @@ def get_skaters(leagues, seasons):
         for i in range (0, len(leagues)):
             try:
                 targetleague = get_league_skater_boxcars(leagues[i], seasons)
-                leaguesall = leaguesall.append(targetleague)
+                leaguesall = leaguesall._append(targetleague)
                 if hidden_patrick == 4:
                     raise KeyboardInterrupt
                 if hidden_patrick == 5:
